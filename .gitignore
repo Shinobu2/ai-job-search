@@ -38,6 +38,10 @@ Thumbs.db
 # Editor
 .vscode/
 .idea/
+.vs/
+
+# Local development worktrees
+.worktrees/
 
 # Memory files (Claude Code user-specific)
 .claude/projects/
