@@ -43,6 +43,13 @@ export interface EvaluationInput {
   recommendations: Array<Record<string, unknown> & { id: string }>;
 }
 
+export interface StoredJob {
+  id: string;
+  title: string | null;
+  company: string | null;
+  location: string | null;
+}
+
 export interface EvidenceMappingInput {
   id: string;
   requirementId: string;
@@ -71,6 +78,27 @@ function now(): string {
 
 export class StorageRepository {
   constructor(private readonly db: Database) {}
+
+  findJobByCanonicalUrl(canonicalUrl: string): StoredJob | null {
+    return this.db.query("SELECT j.id, j.title, j.company, j.location FROM jobs j JOIN job_sources s ON s.id = j.source_id WHERE s.supplied_url = ?").get(canonicalUrl) as StoredJob | null;
+  }
+
+  findJobBySourceId(sourceId: string): StoredJob | null {
+    return this.db.query("SELECT j.id, j.title, j.company, j.location FROM jobs j JOIN job_sources s ON s.id = j.source_id WHERE s.source_locator = ?").get(`source-id:${sourceId}`) as StoredJob | null;
+  }
+
+  findJobByNormalizedTriple(title: string, company: string, location: string): StoredJob | null {
+    const rows = this.db.query("SELECT id, title, company, location FROM jobs").all() as StoredJob[];
+    const normalize = (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase();
+    return rows.find((row) => row.title !== null && row.company !== null && row.location !== null
+      && normalize(row.title) === normalize(title)
+      && normalize(row.company) === normalize(company)
+      && normalize(row.location) === normalize(location)) ?? null;
+  }
+
+  findJobByRawHash(rawHash: string): StoredJob | null {
+    return this.db.query("SELECT j.id, j.title, j.company, j.location FROM jobs j JOIN job_sources s ON s.id = j.source_id WHERE s.raw_hash = ?").get(rawHash) as StoredJob | null;
+  }
 
   importJob(input: JobImportInput): { id: string; existing: boolean } {
     requireValue(input.source.id, "source.id");

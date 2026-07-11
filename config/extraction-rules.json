@@ -1,0 +1,30 @@
+{
+  "version": "extraction-v1",
+  "fields": [
+    { "id": "title", "heading": true, "rule_id": "title.heading" },
+    { "id": "company", "label": "Company", "rule_id": "company.label" },
+    { "id": "location", "label": "Location", "rule_id": "location.label" },
+    { "id": "exact_workplace", "label": "Exact workplace", "rule_id": "exact_workplace.label" },
+    { "id": "employment_type", "label": "Employment", "rule_id": "employment_type.label" },
+    { "id": "contract_type", "label": "Contract type", "rule_id": "contract_type.label" },
+    { "id": "salary", "label": "Salary", "rule_id": "salary.label" },
+    { "id": "languages", "label": "Languages", "rule_id": "languages.label" },
+    { "id": "education", "label": "Education", "rule_id": "education.label" },
+    { "id": "experience", "label": "Experience", "rule_id": "experience.label" },
+    { "id": "skills", "label": "Skills", "rule_id": "skills.label" },
+    { "id": "certifications", "label": "Certifications", "rule_id": "certifications.label" },
+    { "id": "shift", "label": "Shift", "rule_id": "shift.label" },
+    { "id": "on_call", "label": "On-call", "rule_id": "on_call.label" },
+    { "id": "car", "label": "Car", "rule_id": "car.label" },
+    { "id": "physical_requirements", "label": "Physical", "rule_id": "physical_requirements.label" },
+    { "id": "training", "label": "Training", "rule_id": "training.label" },
+    { "id": "seniority", "label": "Seniority", "rule_id": "seniority.label" },
+    { "id": "deadline", "label": "Deadline", "rule_id": "deadline.label" }
+  ],
+  "derived_fields": [
+    { "id": "night_work", "source": "shift", "pattern": "night", "value": "required", "rule_id": "night_work.shift_keyword" }
+  ],
+  "requirements": [
+    { "field": "skills", "type": "skill", "separator": ",", "rule_id": "skills.requirements" }
+  ]
+}
