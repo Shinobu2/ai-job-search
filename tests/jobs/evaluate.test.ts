@@ -201,6 +201,18 @@ test("keeps an unknown shift as VERIFY rather than assuming it is suitable", asy
   expect(result.gates).toContainEqual(expect.objectContaining({ id: "shift", status: "VERIFY" }));
 });
 
+test("keeps a placeholder shift as critical VERIFY rather than passing it", async () => {
+  const result = await evaluateText("# Hardware Technician\nShift: TBD\n");
+
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "shift", status: "VERIFY", critical: true }));
+});
+
+test("keeps an unreliable deadline VERIFY rather than treating it as current", async () => {
+  const result = await evaluateText("# Hardware Technician\nDeadline: TBD\n");
+
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "deadline", status: "VERIFY" }));
+});
+
 test("maps every material requirement once without promoting informal, planned, or education claims", async () => {
   const traineeText = await readFile(join(fixtureDirectory, "dct-trainee.md"), "utf8");
   const extracted = extractVacancy(traineeText);

@@ -228,3 +228,17 @@ The evaluator now compares only explicit `€... net per month` values in either
 plain digits or strict German decimal/thousands notation. It parses
 `€1.200,00` as `1200`; separator-only ambiguous forms are deliberately not
 guessed and return `VERIFY` with the deterministic-comparison reason.
+
+## Unknown shift and deadline closure
+
+### RED
+
+`bun test tests/jobs/evaluate.test.ts` exited 1: `Shift: TBD` was a critical
+`PASS`, and `Deadline: TBD` was a non-expired `PASS`.
+
+### GREEN
+
+Placeholder shift values (`TBD` and `unknown`) now produce critical `VERIFY`.
+Deadlines must be calendar-valid ISO dates before they can pass or block; a
+reliable past ISO date still blocks, while non-ISO or invalid values remain
+`VERIFY`.

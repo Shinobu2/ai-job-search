@@ -39,6 +39,17 @@ function includes(text: string | null, pattern: RegExp): boolean {
   return pattern.test(text ?? "");
 }
 
+function placeholder(text: string | null): boolean {
+  return /^(?:tbd|unknown)$/i.test(text?.trim() ?? "");
+}
+
+function reliableIsoDate(value: string | null): value is string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value ?? "")) return false;
+  const [year, month, day] = (value ?? "").split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
 function hasAcceptedEnglishAlternative(languages: string | null, germanRequirement: "B2" | "C1"): boolean {
   const text = languages ?? "";
   return new RegExp(`german\\s+${germanRequirement}\\s*(?:required\\s*)?(?:or|/)\\s*english|english\\s*(?:or|/)\\s*german\\s+${germanRequirement}`, "i").test(text)
@@ -69,7 +80,7 @@ function gatesFor(archetype: EvaluationResult["archetype"], extracted: Extracted
   const gates: Record<string, Gate> = {
     archetype: archetype === "X" ? gate("archetype", "BLOCKED", true, "Role is outside the supported archetypes", ["taxonomy"])
       : gate("archetype", "PASS", true, `Classified as ${archetype}`, ["taxonomy"]),
-    shift: !shift ? gate("shift", "VERIFY", true, "Shift requirements are unknown")
+    shift: !shift || placeholder(shift) ? gate("shift", "VERIFY", true, "Shift requirements are unknown")
       : includes(shift, /night|rotating/i) && verified(profile.constraints?.night_shifts) && profile.constraints?.night_shifts.value === "blocked"
         ? gate("shift", "BLOCKED", true, "Posting requires night or rotating shifts", ["profile.constraints.night_shifts"])
         : includes(shift, /night|rotating/i) ? gate("shift", "PASS_WITH_RISK", true, "Night or rotating shifts need confirmation")
@@ -129,9 +140,9 @@ function gatesFor(archetype: EvaluationResult["archetype"], extracted: Extracted
       }
       return gate("salary", "PASS", false, "Explicit net salary meets the verified floor");
     })(),
-    deadline: deadline && /^\d{4}-\d{2}-\d{2}$/.test(deadline) && deadline < asOf
+    deadline: reliableIsoDate(deadline) && deadline < asOf
       ? gate("deadline", "BLOCKED", true, "Reliable application deadline has expired", ["posting.deadline"])
-      : deadline ? gate("deadline", "PASS", false, "Deadline has not expired") : gate("deadline", "VERIFY", false, "Deadline is unknown"),
+      : reliableIsoDate(deadline) ? gate("deadline", "PASS", false, "Deadline has not expired") : gate("deadline", "VERIFY", false, "Deadline is unknown or unreliable"),
   };
   return evaluationRules.gate_order.map((id) => gates[id]);
 }
