@@ -23,7 +23,24 @@
         "verification_status": { "$ref": "#/$defs/verificationStatus" },
         "provenance": { "type": "array", "items": { "$ref": "#/$defs/provenance" } }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "verification_status": { "const": "user_confirmed" } } },
+          "then": {
+            "properties": {
+              "provenance": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "required": ["source_type"],
+                  "properties": { "source_type": { "const": "user_statement" } }
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

@@ -13,12 +13,11 @@ export interface SetupSummary {
 function mergeDefaults(defaultValue: unknown, existingValue: unknown): unknown {
   if (Array.isArray(existingValue) || Array.isArray(defaultValue)) return existingValue;
   if (isRecord(defaultValue) && isRecord(existingValue)) {
-    return Object.fromEntries(
-      Object.entries(defaultValue).map(([key, value]) => [
-        key,
-        key in existingValue ? mergeDefaults(value, existingValue[key]) : value,
-      ]),
-    );
+    const merged = { ...existingValue };
+    for (const [key, value] of Object.entries(defaultValue)) {
+      merged[key] = key in existingValue ? mergeDefaults(value, existingValue[key]) : value;
+    }
+    return merged;
   }
   return existingValue;
 }

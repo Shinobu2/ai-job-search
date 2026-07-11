@@ -70,3 +70,45 @@ test("profile rejects inferred legal status", async () => {
 
   expect(() => validateWorkspaceFile("profile", profile)).toThrow();
 });
+
+test("profile rejects user-confirmed facts without user-statement provenance", async () => {
+  const profile = await readExample("profile");
+  profile.locations.radius_km.provenance = [];
+
+  expect(() => validateWorkspaceFile("profile", profile)).toThrow();
+
+  profile.locations.radius_km.provenance = [
+    { source_type: "document", source_ref: "unrelated-document" },
+  ];
+  expect(() => validateWorkspaceFile("profile", profile)).toThrow();
+});
+
+test("evidence rejects completed or employment claims for planned projects", async () => {
+  const evidence = await readExample("evidence");
+  const homeLab = evidence.records.find((record: { id: string }) => record.id === "HOME_LAB_PLAN");
+  homeLab.statement =
+    "Completed home lab employment.";
+
+  expect(() => validateWorkspaceFile("evidence", evidence)).toThrow();
+
+  homeLab.statement = "COMPLETED HOME LAB EMPLOYMENT.";
+  expect(() => validateWorkspaceFile("evidence", evidence)).toThrow();
+});
+
+test("evidence rejects professional-support claims for informal assistance", async () => {
+  const evidence = await readExample("evidence");
+  const discord = evidence.records.find((record: { id: string }) => record.id === "DISCORD_ASSISTANCE");
+  discord.statement =
+    "Professional Discord support.";
+
+  expect(() => validateWorkspaceFile("evidence", evidence)).toThrow();
+
+  discord.statement = "PROFESSIONAL Discord support.";
+  expect(() => validateWorkspaceFile("evidence", evidence)).toThrow();
+});
+
+test("search example has no duplicate candidate agencies policy", async () => {
+  const search = await readExample("search");
+
+  expect(search.agencies_policy).toBeUndefined();
+});

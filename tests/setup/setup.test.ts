@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse, stringify } from "yaml";
 import { setupWorkspace } from "../../scripts/setup";
+import { runDoctor } from "../../scripts/doctor";
 
 async function copyExamplesToTemp() {
   const root = await mkdtemp(join(tmpdir(), "career-control-room-"));
@@ -59,6 +60,37 @@ test("setup rerun preserves existing user scalar map and list values", async () 
     expect(rerunProfile.targets.primary_archetypes.value).toEqual(["custom-target"]);
     expect(summary.created).toEqual(["auto-apply.yml"]);
     expect(await Bun.file(join(root, "workspace", "auto-apply.yml")).exists()).toBe(true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("setup rerun preserves additional keys inside a user-owned map value", async () => {
+  const root = await copyExamplesToTemp();
+  try {
+    const profilePath = join(root, "workspace", "profile.yml");
+    const profile = await readYaml(profilePath);
+    profile.locations.city.value.district = "Sachsenhausen";
+    await writeYaml(profilePath, profile);
+
+    await setupWorkspace(root);
+
+    expect((await readYaml(profilePath)).locations.city.value).toEqual({
+      name: "Frankfurt",
+      country: "Germany",
+      district: "Sachsenhausen",
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("doctor reports a missing gitignore instead of throwing", async () => {
+  const root = await mkdtemp(join(tmpdir(), "career-control-room-"));
+  try {
+    const report = await runDoctor(root);
+
+    expect(report.errors).toContain(".gitignore is missing or unreadable");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

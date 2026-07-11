@@ -12,7 +12,7 @@ records:
     provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]
   - id: DISCORD_ASSISTANCE
     kind: informal_assistance
-    statement: Informal Discord assistance; not professional remote support.
+    statement: Informal Discord assistance; this does not establish remote support.
     reviewer_status: unreviewed
     provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]
   - id: HOME_LAB_PLAN

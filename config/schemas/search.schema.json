@@ -2,10 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "search.schema.json",
   "type": "object",
-  "required": ["schema_version", "agencies_policy"],
+  "required": ["schema_version"],
   "properties": {
-    "schema_version": { "const": 1 },
-    "agencies_policy": { "$ref": "common.schema.json#/$defs/verifiedValue" }
+    "schema_version": { "const": 1 }
   },
   "additionalProperties": false
 }

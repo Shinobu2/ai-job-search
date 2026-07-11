@@ -17,7 +17,29 @@
           "reviewer_status": { "type": "string", "enum": ["unreviewed", "UNKNOWN"] },
           "provenance": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/provenance" } }
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": { "properties": { "kind": { "const": "planned_project" } } },
+            "then": {
+              "not": {
+                "properties": {
+                  "statement": { "type": "string", "pattern": "\\b[Cc][Oo][Mm][Pp][Ll][Ee][Tt][Ee][Dd]\\b|\\b[Ee][Mm][Pp][Ll][Oo][Yy][Mm][Ee][Nn][Tt]\\b" }
+                }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "kind": { "const": "informal_assistance" } } },
+            "then": {
+              "not": {
+                "properties": {
+                  "statement": { "type": "string", "pattern": "\\b[Pp][Rr][Oo][Ff][Ee][Ss][Ss][Ii][Oo][Nn][Aa][Ll]\\b" }
+                }
+              }
+            }
+          }
+        ]
       }
     }
   },

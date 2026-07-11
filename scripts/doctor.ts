@@ -23,9 +23,13 @@ export async function runDoctor(root: string, strict = false): Promise<DoctorRep
   requireTool("xelatex", strict, report);
   requireTool("pdftotext", strict, report);
 
-  const gitignore = await readFile(join(root, ".gitignore"), "utf8");
-  for (const rule of [".vs/", "workspace/"]) {
-    if (!gitignore.split(/\r?\n/).includes(rule)) report.errors.push(`.gitignore is missing ${rule}`);
+  try {
+    const gitignore = await readFile(join(root, ".gitignore"), "utf8");
+    for (const rule of [".vs/", "workspace/"]) {
+      if (!gitignore.split(/\r?\n/).includes(rule)) report.errors.push(`.gitignore is missing ${rule}`);
+    }
+  } catch {
+    report.errors.push(".gitignore is missing or unreadable");
   }
 
   for (const name of workspaceNames) {
