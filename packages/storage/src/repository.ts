@@ -109,9 +109,10 @@ export class StorageRepository {
     if (!isProvenance(input.source.provenance) || !isProvenance(input.job.provenance)) throw new Error("source and job provenance are required");
 
     const write = this.db.transaction(() => {
+      const hasBom = input.source.rawContent.startsWith("\ufeff");
       this.db.query(
-        "INSERT INTO job_sources (id, source_type, raw_content, raw_hash, source_locator, supplied_url, imported_at, provenance_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      ).run(input.source.id, input.source.sourceType, input.source.rawContent, input.source.rawHash, input.source.sourceLocator ?? null, input.source.suppliedUrl ?? null, input.source.importedAt, JSON.stringify(input.source.provenance), now());
+        `INSERT INTO job_sources (id, source_type, raw_content, raw_hash, source_locator, supplied_url, imported_at, provenance_json, created_at) VALUES (?, ?, ${hasBom ? "char(65279) || ?" : "?"}, ?, ?, ?, ?, ?, ?)`,
+      ).run(input.source.id, input.source.sourceType, hasBom ? input.source.rawContent.slice(1) : input.source.rawContent, input.source.rawHash, input.source.sourceLocator ?? null, input.source.suppliedUrl ?? null, input.source.importedAt, JSON.stringify(input.source.provenance), now());
       this.db.query(
         "INSERT INTO jobs (id, source_id, title, company, location, raw_snapshot_hash, provenance_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       ).run(input.job.id, input.job.sourceId, input.job.title ?? null, input.job.company ?? null, input.job.location ?? null, input.job.rawSnapshotHash, JSON.stringify(input.job.provenance), now());

@@ -69,15 +69,16 @@ test("persists a BOM-prefixed local text source that hashes to its stored raw ha
   const directory = await mkdtemp(join(tmpdir(), "career-control-room-import-bom-"));
   try {
     const textPath = join(directory, "bom-vacancy.txt");
-    await writeFile(textPath, `\ufeff${vacancy}`, "utf8");
+    const rawContent = `\ufeff${vacancy}`;
+    await writeFile(textPath, rawContent, "utf8");
     const imported = await importVacancy({ file: textPath }, fixture.repository);
     const source = fixture.db.query("SELECT s.raw_content, s.raw_hash FROM job_sources s JOIN jobs j ON j.source_id = s.id WHERE j.id = ?").get(imported.id) as {
       raw_content: string;
       raw_hash: string;
     };
 
-    expect(source.raw_content.startsWith("\ufeff")).toBe(true);
-    expect(createHash("sha256").update(source.raw_content, "utf8").digest("hex")).toBe(source.raw_hash);
+    expect(source.raw_content).toBe(rawContent);
+    expect(source.raw_hash).toBe(createHash("sha256").update(await readFile(textPath)).digest("hex"));
   } finally {
     fixture.db.close();
     await rm(fixture.directory, { recursive: true, force: true });
