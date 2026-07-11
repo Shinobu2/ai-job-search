@@ -43,6 +43,9 @@ Thumbs.db
 # Local development worktrees
 .worktrees/
 
+# Local agent execution ledger and review artifacts
+.superpowers/
+
 # Memory files (Claude Code user-specific)
 .claude/projects/
 
