@@ -188,3 +188,19 @@ only.
 fail, 89 expectations; `bun run typecheck` exited 0. Explicit alternatives
 now pass for either verified sufficient German or English, block only when
 both verified alternatives are insufficient, and otherwise remain `VERIFY`.
+
+## Salary-floor closure
+
+### RED
+
+`bun test tests/jobs/evaluate.test.ts` exited 1: a posting with an explicit
+€2,000 net monthly salary returned `PASS` with `Explicit net salary meets the
+verified floor` when the candidate floor was either absent or unverified.
+
+### GREEN
+
+`bun test tests/jobs/evaluate.test.ts` exited 0: 19 pass, 0 fail, 61
+expectations. A parsed net monthly salary now returns `VERIFY` with `Candidate
+salary floor needs verification` unless the candidate has a current verified
+numeric `floor_eur`; only then can the comparison result in `BLOCKED` or
+`PASS`.

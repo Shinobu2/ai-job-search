@@ -81,6 +81,24 @@ test("ignores rejected, expired, and unknown profile values when evaluating gate
   }
 });
 
+test("keeps a comparable net salary VERIFY without a verified candidate floor", async () => {
+  const extracted = extractVacancy("# Hardware Technician\nSalary: €2,000 net per month\n");
+  for (const net_monthly_estimate of [
+    { value: {}, verification_status: "user_confirmed", provenance: [{ source_type: "user_statement", source_ref: "test" }] },
+    { value: { floor_eur: 1750 }, verification_status: "unknown", provenance: [{ source_type: "user_statement", source_ref: "test" }] },
+  ]) {
+    const result = evaluateVacancy({ id: "salary_unverified_floor", title: null, company: null, location: null }, extracted, {
+      ...workspace,
+      profile: {
+        ...(workspace.profile as object),
+        compensation: { net_monthly_estimate },
+      },
+    }, "2026-07-12");
+
+    expect(result.gates).toContainEqual(expect.objectContaining({ id: "salary", status: "VERIFY", reason: "Candidate salary floor needs verification" }));
+  }
+});
+
 test("blocks insufficient German when English is not explicitly accepted as an alternative", async () => {
   for (const languages of ["German B2 required; english not accepted", "German B2 required; english preferred"]) {
     const result = await evaluateText(`# Hardware Technician\nSkills: PC hardware\nLanguages: ${languages}\n`);

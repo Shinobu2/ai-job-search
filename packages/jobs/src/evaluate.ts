@@ -111,10 +111,14 @@ function gatesFor(archetype: EvaluationResult["archetype"], extracted: Extracted
       const match = /€\s*([\d.,]+)\s*net\s+per\s+month/i.exec(salary ?? "");
       const amount = match ? Number(match[1].replace(/[.,]/g, "")) : null;
       const floor = profile.compensation?.net_monthly_estimate;
-      if (amount !== null && verified(floor) && typeof floor.value.floor_eur === "number" && amount < floor.value.floor_eur) {
+      if (amount === null) return gate("salary", "VERIFY", false, "Salary is unknown or cannot be compared deterministically");
+      if (!verified(floor) || typeof floor.value.floor_eur !== "number") {
+        return gate("salary", "VERIFY", false, "Candidate salary floor needs verification");
+      }
+      if (amount < floor.value.floor_eur) {
         return gate("salary", "BLOCKED", true, "Explicit net salary is below the verified floor", ["profile.compensation.net_monthly_estimate"]);
       }
-      return amount === null ? gate("salary", "VERIFY", false, "Salary is unknown or cannot be compared deterministically") : gate("salary", "PASS", false, "Explicit net salary meets the verified floor");
+      return gate("salary", "PASS", false, "Explicit net salary meets the verified floor");
     })(),
     deadline: deadline && /^\d{4}-\d{2}-\d{2}$/.test(deadline) && deadline < asOf
       ? gate("deadline", "BLOCKED", true, "Reliable application deadline has expired", ["posting.deadline"])
