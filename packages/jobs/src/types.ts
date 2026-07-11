@@ -37,3 +37,36 @@ export type ExtractedJob = {
   requirements: ExtractedRequirement[];
   uncertainties: string[];
 };
+
+export type GateStatus = "PASS" | "PASS_WITH_RISK" | "VERIFY" | "BLOCKED" | "EMERGENCY_ONLY";
+
+export type Gate = {
+  id: string;
+  status: GateStatus;
+  critical: boolean;
+  reason: string;
+  facts: string[];
+};
+
+export type EvidenceMappingStatus = "proven" | "partial" | "transferable" | "missing" | "unknown" | "contradicted";
+
+export type EvidenceMapping = {
+  id: string;
+  requirementId: string;
+  status: EvidenceMappingStatus;
+  evidenceIds: string[];
+  credit: number;
+};
+
+export type EvaluationResult = {
+  jobId: string;
+  archetype: "A" | "AT" | "BT" | "F" | "X";
+  gates: Gate[];
+  mappings: EvidenceMapping[];
+  fit: number;
+  survival: number | null;
+  confidence: "low" | "medium" | "high";
+  tier: "S" | "A" | "B" | "C";
+  verdict: string;
+  fingerprint: string;
+};

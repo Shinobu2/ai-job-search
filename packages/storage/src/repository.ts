@@ -56,6 +56,8 @@ export interface EvidenceMappingInput {
   evidenceIds: string[];
   evidenceSnapshotHash: string;
   provenance: ProvenanceSnapshot[];
+  mappingStatus?: string;
+  credit?: number;
 }
 
 const hashPattern = /^[a-f0-9]{64}$/;
@@ -168,13 +170,15 @@ export class StorageRepository {
         evidence_ids: row.evidenceIds,
         evidence_snapshot_hash: row.evidenceSnapshotHash,
         provenance: row.provenance,
+        mapping_status: row.mappingStatus ?? null,
+        credit: row.credit ?? null,
       };
       query.run(row.id, input.id, row.requirementId, JSON.stringify(row.evidenceIds), row.evidenceSnapshotHash, JSON.stringify(payload), createdAt, input.evaluatorVersion, JSON.stringify(row.provenance));
     }
   }
 
   private validateMapping(mapping: EvidenceMappingInput): void {
-    const allowed = new Set(["id", "requirementId", "evidenceIds", "evidenceSnapshotHash", "provenance"]);
+    const allowed = new Set(["id", "requirementId", "evidenceIds", "evidenceSnapshotHash", "provenance", "mappingStatus", "credit"]);
     if (Object.keys(mapping).some((key) => !allowed.has(key))) throw new Error("evidence mapping contains unsupported fields");
     requireValue(mapping.id, "evidenceMapping.id");
     requireValue(mapping.requirementId, "evidenceMapping.requirementId");
@@ -183,6 +187,12 @@ export class StorageRepository {
     }
     requireHash(mapping.evidenceSnapshotHash, "evidenceSnapshotHash");
     if (!isProvenance(mapping.provenance)) throw new Error("evidence mapping provenance is required");
+    if (mapping.mappingStatus !== undefined && !["proven", "partial", "transferable", "missing", "unknown", "contradicted"].includes(mapping.mappingStatus)) {
+      throw new Error("evidenceMapping.mappingStatus is invalid");
+    }
+    if (mapping.credit !== undefined && (!Number.isInteger(mapping.credit) || mapping.credit < 0 || mapping.credit > 100)) {
+      throw new Error("evidenceMapping.credit must be an integer from 0 to 100");
+    }
   }
 
   private event(eventType: string, entityType: string, entityId: string, actor: string, reason: string | null, reportHash: string | null, payload: Record<string, unknown>): void {

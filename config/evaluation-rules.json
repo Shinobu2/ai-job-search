@@ -1,0 +1,9 @@
+{
+  "version": "evaluation-rules-v1",
+  "mapping_credits": { "proven": 100, "partial": 70, "transferable": 40, "missing": 0, "unknown": 0, "contradicted": 0 },
+  "requirement_weight": 100,
+  "salary_floor_eur": 1750,
+  "tier_bands": { "S": 80, "A": 60, "B": 30 },
+  "gate_order": ["archetype", "shift", "transport", "physical", "scope", "facilities", "language", "experience", "salary", "deadline"],
+  "evaluator_version": "evaluation-v1"
+}

@@ -1,133 +1,69 @@
-# Task 2 implementation report
+# Job-evaluation Task 2 report
 
 ## Scope
 
-Implemented only Task 2: checksum-protected SQLite migrations, transactional
-operational storage, an explicit capability registry, and local setup/doctor/
-capability-list wiring. No manual vacancy import, extraction, evaluation,
-document generation, connector, browser, outreach, or submission behavior was
-implemented.
+Implemented only deterministic Stage 1 evaluation: versioned role taxonomy,
+ordered gates, evidence mappings, fit/survival/confidence/tier/verdict,
+deterministic fingerprints, and an immutable `persistEvaluation` payload.
+No card, CLI command, network, model, connector, document, or submission
+behavior was added. Task 1 import and extraction were consumed unchanged.
+
+## Changed files
+
+- `config/role-taxonomy.json` and `config/evaluation-rules.json`
+- `packages/jobs/src/rules.ts`, `packages/jobs/src/evaluate.ts`, and
+  `packages/jobs/src/types.ts`
+- `packages/storage/src/repository.ts`
+- `tests/jobs/evaluate.test.ts` and the four Task 2 job fixtures:
+  `night-shift.md`, `own-car.md`, `german-b2.md`, and `unknown-shift.md`
 
 ## TDD evidence
 
 ### RED
 
-1. `C:\Users\Emperor\.bun\bin\bun.exe test tests/storage`
-   - Exit 1. The three suites failed because
-     `packages/storage/src/capabilities`, `migrate`, and `database` did not
-     exist. This established the migration, repository, and registry APIs.
-2. `C:\Users\Emperor\.bun\bin\bun.exe test tests/setup/setup.test.ts`
-   - Exit 1 after adding the SQLite setup regression. The new test expected
-     `workspace/control-room.sqlite` after setup and received `false` because
-     setup did not yet initialize storage.
+1. `C:\Users\Emperor\.bun\bin\bun.exe test tests/jobs/evaluate.test.ts`
+   exited 1 with `Cannot find module '../../packages/jobs/src/evaluate'`.
+   The named classification/gate suite was present and the evaluator did not
+   yet exist.
+2. After adding the classification/gate implementation, the expanded evidence,
+   scoring, and persistence-payload test was added first. The same command
+   exited 1 with `Export named 'buildEvaluationInput' not found`, establishing
+   the absent persisted-evaluation graph API.
 
 ### GREEN
 
-1. `C:\Users\Emperor\.bun\bin\bun.exe test tests/storage`
-   - Exit 0; 7 pass, 0 fail, 22 expectations. Covers fresh/repeated
-     migrations, checksum rejection, FK enforcement, import rollback,
-     reopen persistence, immutable events, duplicate run-key history, explicit
-     capability certification, and Stage 1 effective mode.
-2. `C:\Users\Emperor\.bun\bin\bun.exe run typecheck`
-   - Exit 0; `tsc --noEmit` completed cleanly.
-3. `C:\Users\Emperor\.bun\bin\bun.exe test tests/config/workspace-schemas.test.ts tests/setup/setup.test.ts`
-   - Exit 0; 13 pass, 0 fail, 28 expectations. This includes the new setup
-     storage-initialization regression and preserved Task 1 coverage.
-4. `python tools/security_guards.py`
-   - Exit 0; `security_guards: OK (permissions allowlist, gitignore rules,
-     package manifests)`.
-5. `git diff --check`
-   - Exit 0.
+1. `C:\Users\Emperor\.bun\bin\bun.exe test tests/jobs/evaluate.test.ts tests/storage`
+   exited 0: 17 pass, 0 fail, 73 expectations.
+2. `C:\Users\Emperor\.bun\bin\bun.exe run typecheck` exited 0.
+3. `git diff --check` exited 0.
 
-## Changed files
+## Gate precedence and evidence facts
 
-- Migrations and SQLite opening/migration support:
-  `packages/storage/migrations/001_stage1.sql`,
-  `packages/storage/migrations/002_capabilities.sql`,
-  `packages/storage/src/database.ts`, and
-  `packages/storage/src/migrate.ts`.
-- Atomic job/evaluation operational storage:
-  `packages/storage/src/repository.ts`.
-- Capability definitions and lifecycle enforcement:
-  `config/capability-definitions.json` and
-  `packages/storage/src/capabilities.ts`.
-- Runtime wiring: `scripts/setup.ts`, `scripts/doctor.ts`, and
-  `scripts/cli.ts`.
-- Tests: `tests/storage/migrations.test.ts`,
-  `tests/storage/persistence.test.ts`,
-  `tests/storage/capabilities.test.ts`, and the storage setup assertion in
-  `tests/setup/setup.test.ts`.
+- Classification is config-backed and deterministic: forced X, AT, BT, A, F,
+  then X. Facilities cues outrank generic hardware cues; a facilities trainee
+  remains BT while explicitly excluded/high-voltage roles are X.
+- Gates are emitted in config order: archetype, shift, transport, physical,
+  scope, facilities, language, experience, salary, deadline. Each includes its
+  decisive posting/profile fact references. Any `BLOCKED` result forces verdict
+  `BLOCKED` and tier C; critical `VERIFY` caps an otherwise higher tier at B.
+- Verified current profile facts alone feed survival; no relevant verified fact
+  yields `null`. Fit is derived solely from integer mapping credits and does
+  not change when verified profile facts change.
+- Direct evidence is `partial` unless a verified record proves it. Proven and
+  partial mappings include evidence IDs. Planned/home-lab/theory claims are
+  `unknown`; Discord is never professional support; education/Ausbildung/degree
+  language is not treated as equivalence.
+- The persistence input includes both config versions as system provenance,
+  stable requirement and derived-row IDs, evidence snapshot SHA-256, mapping
+  status/credit, ordered gates, fit/survival scores, tier/confidence, and the
+  recommendation. Repository validation whitelists these immutable mapping
+  fields and still rejects mutable candidate evidence content.
 
-## Assumptions
+## Concerns
 
-- The initial registry contains 17 deliberately named Stage 1 capabilities:
-  currently delivered workspace/storage/registry capabilities begin
-  `implemented`; evaluation/document/PDF/export capabilities remain
-  `unavailable`; remote or submission-adjacent capabilities are `disabled`.
-- SQLite is an immutable operational record, not an Evidence Vault. Evidence
-  mappings contain only evidence IDs, the snapshot hash, evaluator payload, and
-  provenance; they never store mutable candidate evidence records.
-- `configured_mode` remains user configuration in YAML. The registry computes
-  `effective_mode` in memory and returns `prepare_only` for every Stage 1 mode,
-  including `supervised_auto`.
-- `certify()` is the only route to `certified`; it requires `tested`, an actor,
-  reason, SHA-256 report hash, and explicit passing evidence. All transitions
-  append an event history row.
-
-## Self-review
-
-- `openDatabase` enables and verifies FK enforcement, sets a 5-second busy
-  timeout, and uses WAL/NORMAL only for file databases.
-- Migrations are ordered, checksummed against their current bytes, and applied
-  in immediate transactions. A changed applied file aborts migration.
-- Imports and evaluation graphs run in immediate transactions. The run key is
-  unique and returns the historical evaluation instead of overwriting it.
-- Every derived evaluation table stores creation time, evaluator version, and
-  JSON-valid provenance. Event update/delete triggers reject mutation.
-- Changes are scoped to Task 2. The CLI only exposes a read-only capability
-  listing; it does not add the future job import/evaluation/export workflows.
-
-## Review fix wave: evidence references and run-key serialization
-
-### Root causes
-
-1. `EvaluationInput.evidenceMappings` was structurally typed as an arbitrary
-   record and `insertMappings()` persisted `JSON.stringify(row)`. A caller
-   could therefore send mutable evidence content and turn SQLite into a second
-   Evidence Vault.
-2. The original `evidence_mappings.requirement_id` column had no foreign key
-   to `extracted_requirements`, so an evaluation could persist an orphaned
-   mapping.
-3. `persistEvaluation()` read `run_key` before it started its immediate
-   transaction. A competing writer could insert the same key in the resulting
-   check-then-act window.
-
-### RED
-
-`C:\Users\Emperor\.bun\bin\bun.exe test tests/storage/migrations.test.ts tests/storage/persistence.test.ts`
-exited 1 with all three intended failures:
-
-- expected migration `003_evidence_mapping_requirement_fk.sql` was absent;
-- a mapping containing `mutableEvidenceContent` was accepted; and
-- a mapping pointing to `req_missing` committed instead of rolling back.
-
-### Fix and GREEN
-
-- Added `003_evidence_mapping_requirement_fk.sql`, which rebuilds the mapping
-  table with `requirement_id REFERENCES extracted_requirements(id)` without
-  changing an already-checksummed migration.
-- Replaced arbitrary mapping records with an explicit ID/hash/provenance input
-  shape. Runtime validation rejects extra properties and persistence writes a
-  freshly constructed whitelist payload, never caller-provided evidence text.
-- Moved the duplicate lookup inside the same `immediate()` transaction as the
-  insert. A two-connection regression injects a competing same-key write at
-  the duplicate lookup: the primary write succeeds while the competing writer
-  is locked out, proving there is no pre-transaction check window.
-
-1. `C:\Users\Emperor\.bun\bin\bun.exe test tests/storage/persistence.test.ts`
-   - Exit 0; 6 pass, 0 fail, 16 expectations, including the two-connection
-     run-key regression.
-2. `C:\Users\Emperor\.bun\bin\bun.exe test tests/storage/migrations.test.ts tests/storage/persistence.test.ts`
-   - Exit 0; 7 pass, 0 fail, 19 expectations.
-3. `C:\Users\Emperor\.bun\bin\bun.exe run typecheck`
-   - Exit 0; `tsc --noEmit` completed cleanly.
+- The extractor currently creates material requirements from the skills field;
+  evaluation safely handles any additional future requirement types without
+  promoting unsupported candidate claims.
+- Salary blocks only when an explicit net-monthly amount can be compared to a
+  verified candidate floor. Gross or ambiguous salary remains VERIFY rather
+  than receiving a fabricated conversion.

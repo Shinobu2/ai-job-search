@@ -1,0 +1,8 @@
+{
+  "version": "role-taxonomy-v1",
+  "forced_x_cues": ["warehouse", "conveyor", "high-voltage maintenance", "licensed electrician"],
+  "facilities_cues": ["facilities", "ups", "generator", "hvac", "electrical switching", "critical switching", "high-voltage"],
+  "trainee_cues": ["trainee", "training", "junior programme"],
+  "hardware_cues": ["data center", "datacenter", "hardware", "server", "cabling", "linux"],
+  "support_cues": ["support", "helpdesk", "help desk", "ticketing", "active directory", "user support"]
+}
