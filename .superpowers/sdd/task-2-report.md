@@ -172,3 +172,19 @@ regression before its matching implementation change:
 3. The invalid `reviewer_status: verified` fixture was changed to
    `unreviewed`; a schema-aware regression proves that `verified` is rejected
    and an exact schema-valid unreviewed record maps only to `partial`.
+
+## German-or-English symmetry correction
+
+### RED
+
+`bun test tests/jobs/evaluate.test.ts` exited 1: a posting with `German B2
+required or English`, document-verified German B2, and no English fact
+returned critical `VERIFY` because the alternative branch inspected English
+only.
+
+### GREEN
+
+`bun test tests/jobs/evaluate.test.ts tests/storage` exited 0: 28 pass, 0
+fail, 89 expectations; `bun run typecheck` exited 0. Explicit alternatives
+now pass for either verified sufficient German or English, block only when
+both verified alternatives are insufficient, and otherwise remain `VERIFY`.

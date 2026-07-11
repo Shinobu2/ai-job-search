@@ -119,7 +119,7 @@ test("blocks a verified insufficient English alternative", async () => {
     },
   }, "2026-07-12");
 
-  expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "BLOCKED", critical: true, facts: ["profile.languages.english"] }));
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "BLOCKED", critical: true, facts: ["profile.languages.german", "profile.languages.english"] }));
 });
 
 test("passes a sufficient current verified English alternative", async () => {
@@ -136,6 +136,21 @@ test("passes a sufficient current verified English alternative", async () => {
   }, "2026-07-12");
 
   expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "PASS", critical: true, facts: ["profile.languages.english"] }));
+});
+
+test("passes a sufficient verified German alternative when English is absent", async () => {
+  const extracted = extractVacancy("# Hardware Technician\nSkills: PC hardware\nLanguages: German B2 required or English\n");
+  const result = evaluateVacancy({ id: "german_alternative_sufficient", title: null, company: null, location: null }, extracted, {
+    ...workspace,
+    profile: {
+      ...(workspace.profile as object),
+      languages: {
+        german: { value: { self_assessed_level: "B2" }, verification_status: "document_verified", provenance: [{ source_type: "document", source_ref: "test" }] },
+      },
+    },
+  }, "2026-07-12");
+
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "PASS", critical: true, facts: ["profile.languages.german"] }));
 });
 
 test("passes a sufficient verified German level and includes its profile fact in survival", async () => {

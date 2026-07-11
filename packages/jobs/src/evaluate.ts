@@ -84,14 +84,16 @@ function gatesFor(archetype: EvaluationResult["archetype"], extracted: Extracted
       const englishAlternative = germanRequirement !== undefined && hasAcceptedEnglishAlternative(languages, germanRequirement);
       if (!germanRequirement) return gate("language", "PASS", false, "No German B2/C1 requirement");
       if (englishAlternative) {
+        const german = profile.languages?.german;
         const english = profile.languages?.english;
-        if (verified(english) && !levelAtLeast(english.value.self_assessed_level, germanRequirement)) {
-          return gate("language", "BLOCKED", true, "English alternative conflicts with verified level", ["profile.languages.english"]);
+        if (verified(german) && levelAtLeast(german.value.self_assessed_level, germanRequirement)) {
+          return gate("language", "PASS", true, "German alternative is verified", ["profile.languages.german"]);
         }
-        if (verified(english)) {
+        if (verified(english) && levelAtLeast(english.value.self_assessed_level, germanRequirement)) {
           return gate("language", "PASS", true, "English alternative is verified", ["profile.languages.english"]);
         }
-        return gate("language", "VERIFY", true, `English alternative needs verification`);
+        if (!verified(german) || !verified(english)) return gate("language", "VERIFY", true, "German or English alternative needs verification");
+        return gate("language", "BLOCKED", true, "German and English alternatives conflict with verified levels", ["profile.languages.german", "profile.languages.english"]);
       }
       const german = profile.languages?.german;
       if (verified(german) && !levelAtLeast(german.value.self_assessed_level, germanRequirement)) {
