@@ -73,11 +73,12 @@ async function sourceFrom(request: ImportRequest): Promise<SourceInput> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error(`Local file does not exist: ${file}`);
     throw error;
   }
-  const rawContent = new TextDecoder().decode(bytes);
+  const rawContent = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+  const extractionText = rawContent.replace(/^\ufeff/, "");
   const html = extension === ".html" || extension === ".htm";
   return {
     rawContent,
-    extractionText: html ? visibleHtmlText(rawContent) : rawContent,
+    extractionText: html ? visibleHtmlText(extractionText) : extractionText,
     rawHash: hash(bytes),
     sourceType: html ? "local_html" : extension === ".md" ? "local_markdown" : "local_text",
     sourceLocator: request.sourceId ? `source-id:${request.sourceId}` : file,
