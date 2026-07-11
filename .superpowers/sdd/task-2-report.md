@@ -204,3 +204,27 @@ expectations. A parsed net monthly salary now returns `VERIFY` with `Candidate
 salary floor needs verification` unless the candidate has a current verified
 numeric `floor_eur`; only then can the comparison result in `BLOCKED` or
 `PASS`.
+
+## Salary-format P1 correction
+
+### Root cause
+
+The salary gate deleted both `.` and `,` from an explicit net-monthly amount
+before numeric conversion. Consequently, the unambiguous German amount
+`€1.200,00 net per month` was interpreted as `120000` rather than `1200` and
+could incorrectly pass a verified €1,750 candidate floor.
+
+### RED
+
+`bun test tests/jobs/evaluate.test.ts` exited 1 with two targeted regressions:
+
+1. The German-formatted €1,200 amount did not produce a blocking salary gate.
+2. The locale-ambiguous comma-only format `€1,200 net per month` was treated
+   as a blocking €1,200 amount rather than remaining `VERIFY`.
+
+### GREEN
+
+The evaluator now compares only explicit `€... net per month` values in either
+plain digits or strict German decimal/thousands notation. It parses
+`€1.200,00` as `1200`; separator-only ambiguous forms are deliberately not
+guessed and return `VERIFY` with the deterministic-comparison reason.

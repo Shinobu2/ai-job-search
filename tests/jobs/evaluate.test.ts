@@ -58,12 +58,22 @@ test("blocks reliable role requirements that contradict verified candidate facts
   const warehouse = await evaluateText("# Hardware Technician\nSkills: Warehouse conveyor operation\n");
   const electrical = await evaluateText("# Electrical Technician\nSkills: HVAC, electrical switching\nEducation: Licensed electrician required\n");
   const senior = await evaluateText("# Hardware Technician\nExperience: 5 years senior-only professional experience required\n");
-  const salary = await evaluateText("# Hardware Technician\nSalary: €1,200 net per month\n");
+  const salary = await evaluateText("# Hardware Technician\nSalary: €1.200,00 net per month\n");
   const expired = await evaluateText("# Hardware Technician\nDeadline: 2026-07-01\n");
   for (const result of [car, german, heavy, warehouse, electrical, senior, salary, expired]) {
     expect(result.gates.some((gate) => gate.status === "BLOCKED")).toBe(true);
     expect(result.tier).toBe("C");
   }
+});
+
+test("keeps ambiguous net monthly salary separators VERIFY rather than guessing", async () => {
+  const result = await evaluateText("# Hardware Technician\nSalary: €1,200 net per month\n");
+
+  expect(result.gates).toContainEqual(expect.objectContaining({
+    id: "salary",
+    status: "VERIFY",
+    reason: "Salary is unknown or cannot be compared deterministically",
+  }));
 });
 
 test("ignores rejected, expired, and unknown profile values when evaluating gates", async () => {
@@ -82,7 +92,7 @@ test("ignores rejected, expired, and unknown profile values when evaluating gate
 });
 
 test("keeps a comparable net salary VERIFY without a verified candidate floor", async () => {
-  const extracted = extractVacancy("# Hardware Technician\nSalary: €2,000 net per month\n");
+  const extracted = extractVacancy("# Hardware Technician\nSalary: €2.000,00 net per month\n");
   for (const net_monthly_estimate of [
     { value: {}, verification_status: "user_confirmed", provenance: [{ source_type: "user_statement", source_ref: "test" }] },
     { value: { floor_eur: 1750 }, verification_status: "unknown", provenance: [{ source_type: "user_statement", source_ref: "test" }] },

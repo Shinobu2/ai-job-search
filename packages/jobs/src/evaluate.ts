@@ -45,6 +45,16 @@ function hasAcceptedEnglishAlternative(languages: string | null, germanRequireme
     || /\benglish\s+(?:is\s+)?(?:accepted|allowed|sufficient|ok(?:ay)?)\s+(?:as\s+)?(?:an\s+)?alternative\b/i.test(text);
 }
 
+function explicitNetMonthlyEur(salary: string | null): number | null {
+  const match = /€\s*([\d.,]+)\s*net\s+per\s+month\b/i.exec(salary ?? "");
+  const value = match?.[1];
+  if (!value) return null;
+  if (/^\d+$/.test(value)) return Number(value);
+  if (!/^(?:\d{1,3}(?:\.\d{3})+|\d+),\d{2}$/.test(value)) return null;
+  const amount = Number(value.replace(/\./g, "").replace(",", "."));
+  return Number.isFinite(amount) ? amount : null;
+}
+
 function gatesFor(archetype: EvaluationResult["archetype"], extracted: ExtractedJob, workspace: WorkspaceSnapshot, asOf: string): Gate[] {
   const profile = profileOf(workspace);
   const shift = field(extracted, "shift");
@@ -108,8 +118,7 @@ function gatesFor(archetype: EvaluationResult["archetype"], extracted: Extracted
       ? gate("experience", "BLOCKED", true, "Senior-only experience is required", ["posting.experience"])
       : gate("experience", "PASS", false, "No senior-only experience requirement"),
     salary: (() => {
-      const match = /€\s*([\d.,]+)\s*net\s+per\s+month/i.exec(salary ?? "");
-      const amount = match ? Number(match[1].replace(/[.,]/g, "")) : null;
+      const amount = explicitNetMonthlyEur(salary);
       const floor = profile.compensation?.net_monthly_estimate;
       if (amount === null) return gate("salary", "VERIFY", false, "Salary is unknown or cannot be compared deterministically");
       if (!verified(floor) || typeof floor.value.floor_eur !== "number") {
