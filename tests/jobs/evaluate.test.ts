@@ -87,6 +87,26 @@ test("blocks insufficient German when English is not explicitly accepted as an a
   }
 });
 
+test("treats English accepted in addition to German as an additive requirement", async () => {
+  const result = await evaluateText("# Hardware Technician\nSkills: PC hardware\nLanguages: German B2 required; English is accepted in addition\n");
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "BLOCKED" }));
+});
+
+test("passes a sufficient verified German level and includes its profile fact in survival", async () => {
+  const extracted = extractVacancy("# Hardware Technician\nSkills: PC hardware\nLanguages: German B2 required\n");
+  const result = evaluateVacancy({ id: "german_b2_verified", title: null, company: null, location: null }, extracted, {
+    ...workspace,
+    profile: {
+      ...(workspace.profile as object),
+      languages: {
+        german: { value: { self_assessed_level: "B2" }, verification_status: "user_confirmed", provenance: [{ source_type: "user_statement", source_ref: "test" }] },
+      },
+    },
+  }, "2026-07-12");
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "PASS", critical: true, facts: ["profile.languages.german"] }));
+  expect(result.survival).toBe(100);
+});
+
 test("keeps an unknown shift as VERIFY rather than assuming it is suitable", async () => {
   const result = await evaluateFixture("unknown-shift.md");
   expect(result.gates).toContainEqual(expect.objectContaining({ id: "shift", status: "VERIFY" }));
@@ -155,6 +175,20 @@ test("does not turn home-lab, planned, or theory evidence into ordinary skills",
     { status: "unknown", evidenceIds: [] },
     { status: "unknown", evidenceIds: [] },
   ]);
+});
+
+test("does not promote hyphenated home-lab evidence to a proven ordinary skill", async () => {
+  const extracted = extractVacancy("# Hardware Technician\nSkills: PC hardware\n");
+  const result = evaluateVacancy({ id: "hyphenated_home_lab", title: null, company: null, location: null }, {
+    ...extracted,
+    requirements: [{ id: "hardware", type: "skill", text: "hardware troubleshooting", spans: [], rule_ids: [] }],
+  }, {
+    ...workspace,
+    evidence: {
+      records: [{ id: "HOME_LAB", kind: "hardware", statement: "Home-lab hardware troubleshooting", reviewer_status: "verified" }],
+    },
+  }, "2026-07-12");
+  expect(result.mappings).toEqual([expect.objectContaining({ status: "unknown", evidenceIds: [] })]);
 });
 
 test("is deterministic, makes blockers override fit, and keeps fit independent from verified survival facts", async () => {

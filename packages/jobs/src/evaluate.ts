@@ -42,7 +42,7 @@ function includes(text: string | null, pattern: RegExp): boolean {
 function hasAcceptedEnglishAlternative(languages: string | null, germanRequirement: "B2" | "C1"): boolean {
   const text = languages ?? "";
   return new RegExp(`german\\s+${germanRequirement}\\s*(?:required\\s*)?(?:or|/)\\s*english|english\\s*(?:or|/)\\s*german\\s+${germanRequirement}`, "i").test(text)
-    || /\benglish\s+(?:is\s+)?(?:accepted|allowed|sufficient|ok(?:ay)?)\b/i.test(text);
+    || /\benglish\s+(?:is\s+)?(?:accepted|allowed|sufficient|ok(?:ay)?)\s+(?:as\s+)?(?:an\s+)?alternative\b/i.test(text);
 }
 
 function gatesFor(archetype: EvaluationResult["archetype"], extracted: ExtractedJob, workspace: WorkspaceSnapshot, asOf: string): Gate[] {
@@ -87,6 +87,9 @@ function gatesFor(archetype: EvaluationResult["archetype"], extracted: Extracted
       if (verified(german) && !levelAtLeast(german.value.self_assessed_level, germanRequirement)) {
         return gate("language", "BLOCKED", true, `German ${germanRequirement} conflicts with verified level`, ["profile.languages.german"]);
       }
+      if (verified(german)) {
+        return gate("language", "PASS", true, `Verified German level meets ${germanRequirement}`, ["profile.languages.german"]);
+      }
       return gate("language", "VERIFY", true, `German ${germanRequirement} needs verification`);
     })(),
     experience: includes(experience, /senior-only|senior.*required|[3-9]\s+years.*(senior|professional)/i)
@@ -111,13 +114,13 @@ function gatesFor(archetype: EvaluationResult["archetype"], extracted: Extracted
 function mappingFor(requirement: ExtractedJob["requirements"][number], evidence: Evidence[]): EvidenceMapping {
   const text = requirement.text.toLowerCase();
   const id = `mapping_${requirement.id}`;
-  const unknownClaim = /home lab|planned|theory/.test(text);
+  const unknownClaim = /home[-\s]+lab|planned|theory/.test(text);
   const discord = evidence.find((record) => record.kind === "informal_assistance");
-  const eligibleEvidence = evidence.filter((record) => record.kind !== "planned_project" && !/home lab|planned|theory/i.test(record.statement));
+  const eligibleEvidence = evidence.filter((record) => record.kind !== "planned_project" && !/home[-\s]+lab|planned|theory/i.test(record.statement));
   if (/support|help.?desk|ticket/.test(text) && discord) return { id, requirementId: requirement.id, status: "contradicted", evidenceIds: [], credit: evaluationRules.mapping_credits.contradicted };
   if (unknownClaim) return { id, requirementId: requirement.id, status: "unknown", evidenceIds: [], credit: evaluationRules.mapping_credits.unknown };
   if (/education|ausbildung|degree/.test(text)) return { id, requirementId: requirement.id, status: "missing", evidenceIds: [], credit: evaluationRules.mapping_credits.missing };
-  const disqualified = evidence.find((record) => (record.kind === "planned_project" || /home lab|planned|theory/i.test(record.statement))
+  const disqualified = evidence.find((record) => (record.kind === "planned_project" || /home[-\s]+lab|planned|theory/i.test(record.statement))
     && (record.statement.toLowerCase().includes(text) || (record.kind === "hardware" && /hardware|server|cabl/.test(text))));
   if (disqualified) return { id, requirementId: requirement.id, status: "unknown", evidenceIds: [], credit: evaluationRules.mapping_credits.unknown };
   const exact = eligibleEvidence.find((record) => record.statement.toLowerCase().includes(text));

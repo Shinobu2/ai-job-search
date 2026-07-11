@@ -97,3 +97,44 @@ behavior was added. Task 1 import and extraction were consumed unchanged.
 expectations. The evaluator now limits verified values to `user_confirmed` and
 `document_verified`, recognizes only explicit English alternatives, and
 filters home-lab/planned/theory evidence before exact or transferable matching.
+
+## P1 re-review corrections
+
+### Root causes
+
+1. The English-acceptance fallback considered any `English is accepted` phrase
+   to be a German alternative, even when the posting stated that English was
+   accepted in addition to mandatory German.
+2. Origin guards only matched the space-separated phrase `home lab`; a
+   hyphenated `home-lab` record could enter exact evidence matching and become
+   `proven`.
+3. A verified German level at or above the posting requirement did not have a
+   success branch, so it fell through to the critical `VERIFY` result and did
+   not contribute its profile fact to survival.
+
+### RED
+
+Each regression was added and run separately with
+`bun test tests/jobs/evaluate.test.ts` before its implementation change:
+
+1. `German B2 required; English is accepted in addition` returned a `PASS`
+   language gate instead of blocking verified A2 German.
+2. A `Home-lab hardware troubleshooting` record with reviewer status
+   `verified` mapped an ordinary `hardware troubleshooting` requirement as
+   `proven` with evidence ID `HOME_LAB`, rather than evidence-free `unknown`.
+3. Verified German B2 against a German B2 requirement returned critical
+   `VERIFY` with no profile fact rather than `PASS` and
+   `profile.languages.german`.
+
+### GREEN
+
+After each minimal evaluator change, the same focused suite exited 0:
+
+1. English acceptance now requires an explicit alternative phrase (or an
+   `or`/`/` construction), so additive English remains additive and verified
+   insufficient German blocks.
+2. Home-lab origin guards recognize both `home lab` and `home-lab` before
+   exact or transferable evidence matching.
+3. A verified German level that meets B2/C1 now emits a critical `PASS` gate
+   with `profile.languages.german`; its verified fact remains part of the
+   survival calculation (the regression evaluates survival as `100`).
