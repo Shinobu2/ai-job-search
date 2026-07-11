@@ -54,7 +54,7 @@ Create tests for `--text`, `.txt`, `.md`, and local HTML visible-text extraction
 
 - [ ] **Step 2: Run RED tests**
 
-Run: `C:\Users\Emperor\.bun\bin\bun.exe test tests/jobs/import.test.ts`  
+Run: `C:\Users\Emperor\.bun\bin\bun.exe test tests/jobs/import.test.ts`
 Expected: FAIL because `packages/jobs/src/import.ts` does not exist.
 
 - [ ] **Step 3: Add minimal storage lookup/write methods and importer**
@@ -111,7 +111,7 @@ Assert AT trainee, A hardware DCT, BT facilities trainee, unqualified facilities
 
 - [ ] **Step 2: Run RED tests**
 
-Run: `C:\Users\Emperor\.bun\bin\bun.exe test tests/jobs/evaluate.test.ts`  
+Run: `C:\Users\Emperor\.bun\bin\bun.exe test tests/jobs/evaluate.test.ts`
 Expected: FAIL because `evaluateVacancy` does not exist.
 
 - [ ] **Step 3: Implement versioned classification and gates before scoring**
@@ -162,7 +162,7 @@ Spawn the CLI in a copied temporary workspace. Assert functional `job:import -- 
 
 - [ ] **Step 2: Run RED tests**
 
-Run: `C:\Users\Emperor\.bun\bin\bun.exe test tests/jobs/cli-flow.test.ts`  
+Run: `C:\Users\Emperor\.bun\bin\bun.exe test tests/jobs/cli-flow.test.ts`
 Expected: FAIL because `scripts/cli.ts` currently has no `job` dispatcher.
 
 - [ ] **Step 3: Implement card, export and CLI contracts**
