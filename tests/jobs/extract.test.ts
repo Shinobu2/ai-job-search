@@ -42,6 +42,8 @@ test("extracts the versioned vacancy fields and stable requirements from determi
     { id: "requirement_a783a87b8c758884", type: "skill", text: "Linux" },
     { id: "requirement_a9b7b1dd5e2f7550", type: "skill", text: "cable management" },
   ]);
+  const nightWork = extracted.fields.night_work;
+  expect(text.slice(nightWork.spans[0].start, nightWork.spans[0].end)).toBe("night");
   expect(extracted.uncertainties).toEqual([]);
   expect(extractVacancy(text)).toEqual(extracted);
 });

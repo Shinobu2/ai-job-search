@@ -55,7 +55,12 @@ function derivedField(fields: Record<string, ExtractedField>, rule: DerivedField
   const match = new RegExp(rule.pattern, "i").exec(source.value);
   if (!match || match.index === undefined) return unknown(rule.rule_id);
   const sourceSpan = source.spans[0];
-  return known(rule.value, sourceSpan.start + match.index, rule.rule_id);
+  return {
+    state: "known",
+    value: rule.value,
+    spans: [{ start: sourceSpan.start + match.index, end: sourceSpan.start + match.index + match[0].length }],
+    rule_ids: [rule.rule_id],
+  };
 }
 
 function requirementsFor(fields: Record<string, ExtractedField>, rules_: RequirementRule[]): ExtractedRequirement[] {
