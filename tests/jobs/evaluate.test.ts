@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorkspaceSnapshot } from "../../packages/core/src/types";
+import { validateWorkspaceFile } from "../../packages/core/src/workspace";
 import { extractVacancy } from "../../packages/jobs/src/extract";
 import { buildEvaluationInput, evaluateVacancy } from "../../packages/jobs/src/evaluate";
 import type { ExtractedJob } from "../../packages/jobs/src/types";
@@ -90,6 +91,51 @@ test("blocks insufficient German when English is not explicitly accepted as an a
 test("treats English accepted in addition to German as an additive requirement", async () => {
   const result = await evaluateText("# Hardware Technician\nSkills: PC hardware\nLanguages: German B2 required; English is accepted in addition\n");
   expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "BLOCKED" }));
+});
+
+test("requires current verified English when it is an explicit German alternative", async () => {
+  const extracted = extractVacancy("# Hardware Technician\nSkills: PC hardware\nLanguages: German B2 required or English\n");
+  const result = evaluateVacancy({ id: "english_alternative_missing", title: null, company: null, location: null }, extracted, {
+    ...workspace,
+    profile: {
+      ...(workspace.profile as object),
+      languages: { german: (workspace.profile as { languages: { german: unknown } }).languages.german },
+    },
+  }, "2026-07-12");
+
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "VERIFY", critical: true }));
+});
+
+test("blocks a verified insufficient English alternative", async () => {
+  const extracted = extractVacancy("# Hardware Technician\nSkills: PC hardware\nLanguages: German B2 required or English\n");
+  const result = evaluateVacancy({ id: "english_alternative_insufficient", title: null, company: null, location: null }, extracted, {
+    ...workspace,
+    profile: {
+      ...(workspace.profile as object),
+      languages: {
+        german: (workspace.profile as { languages: { german: unknown } }).languages.german,
+        english: { value: { self_assessed_level: "A2" }, verification_status: "document_verified", provenance: [{ source_type: "document", source_ref: "test" }] },
+      },
+    },
+  }, "2026-07-12");
+
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "BLOCKED", critical: true, facts: ["profile.languages.english"] }));
+});
+
+test("passes a sufficient current verified English alternative", async () => {
+  const extracted = extractVacancy("# Hardware Technician\nSkills: PC hardware\nLanguages: German B2 required or English\n");
+  const result = evaluateVacancy({ id: "english_alternative_sufficient", title: null, company: null, location: null }, extracted, {
+    ...workspace,
+    profile: {
+      ...(workspace.profile as object),
+      languages: {
+        german: (workspace.profile as { languages: { german: unknown } }).languages.german,
+        english: { value: { self_assessed_level: "B2" }, verification_status: "document_verified", provenance: [{ source_type: "document", source_ref: "test" }] },
+      },
+    },
+  }, "2026-07-12");
+
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "PASS", critical: true, facts: ["profile.languages.english"] }));
 });
 
 test("passes a sufficient verified German level and includes its profile fact in survival", async () => {
@@ -185,10 +231,32 @@ test("does not promote hyphenated home-lab evidence to a proven ordinary skill",
   }, {
     ...workspace,
     evidence: {
-      records: [{ id: "HOME_LAB", kind: "hardware", statement: "Home-lab hardware troubleshooting", reviewer_status: "verified" }],
+      records: [{ id: "HOME_LAB", kind: "hardware", statement: "Home-lab hardware troubleshooting", reviewer_status: "unreviewed" }],
     },
   }, "2026-07-12");
   expect(result.mappings).toEqual([expect.objectContaining({ status: "unknown", evidenceIds: [] })]);
+});
+
+test("maps schema-valid unreviewed evidence as partial instead of inventing review", async () => {
+  const evidence = {
+    schema_version: 1,
+    records: [{
+      id: "PC_HARDWARE",
+      kind: "hardware",
+      statement: "Personal PC hardware experience",
+      reviewer_status: "unreviewed",
+      provenance: [{ source_type: "user_statement", source_ref: "test" }],
+    }],
+  };
+  expect(() => validateWorkspaceFile("evidence", evidence)).not.toThrow();
+
+  const extracted = extractVacancy("# Hardware Technician\nSkills: PC hardware\n");
+  const result = evaluateVacancy({ id: "schema_valid_evidence", title: null, company: null, location: null }, {
+    ...extracted,
+    requirements: [{ id: "hardware", type: "skill", text: "personal pc hardware experience", spans: [], rule_ids: [] }],
+  }, { ...workspace, evidence }, "2026-07-12");
+
+  expect(result.mappings).toEqual([expect.objectContaining({ status: "partial", evidenceIds: ["PC_HARDWARE"] })]);
 });
 
 test("is deterministic, makes blockers override fit, and keeps fit independent from verified survival facts", async () => {

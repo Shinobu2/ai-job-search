@@ -49,8 +49,8 @@ behavior was added. Task 1 import and extraction were consumed unchanged.
 - Verified current profile facts alone feed survival; no relevant verified fact
   yields `null`. Fit is derived solely from integer mapping credits and does
   not change when verified profile facts change.
-- Direct evidence is `partial` unless a verified record proves it. Proven and
-  partial mappings include evidence IDs. Planned/home-lab/theory claims are
+- Schema-valid direct evidence is `partial`; mappings include evidence IDs.
+  Planned/home-lab/theory claims are
   `unknown`; Discord is never professional support; education/Ausbildung/degree
   language is not treated as equivalence.
 - The persistence input includes both config versions as system provenance,
@@ -138,3 +138,37 @@ After each minimal evaluator change, the same focused suite exited 0:
 3. A verified German level that meets B2/C1 now emits a critical `PASS` gate
    with `profile.languages.german`; its verified fact remains part of the
    survival calculation (the regression evaluates survival as `100`).
+
+## Final review corrections
+
+### Root causes
+
+1. The explicit German-or-English path returned `PASS` before inspecting the
+   candidate's English fact, allowing missing, rejected, expired, or
+   insufficient English to pass a critical language gate.
+2. Exact evidence matching recognized a `reviewer_status: verified` value even
+   though `config/schemas/evidence.schema.json` only permits `unreviewed` and
+   `UNKNOWN`; this made a schema-impossible `proven` mapping reachable in
+   tests and code.
+
+### RED
+
+`bun test tests/jobs/evaluate.test.ts` exited 1 for each new language
+regression before its matching implementation change:
+
+1. A posting with `German B2 required or English` and no verified English
+   produced `PASS` rather than critical `VERIFY`.
+2. The same posting with document-verified English A2 produced `PASS` rather
+   than critical `BLOCKED` with `profile.languages.english` as its fact.
+
+### GREEN
+
+1. `bun test tests/jobs/evaluate.test.ts tests/config/workspace-schemas.test.ts`
+   exited 0: 25 pass, 0 fail, 75 expectations.
+2. Explicit alternatives now require `user_confirmed` or `document_verified`
+   English at or above the stated B2/C1 level: missing/unverified values
+   `VERIFY`, verified insufficient values `BLOCK`, and sufficient verified
+   values `PASS` with the English profile fact.
+3. The invalid `reviewer_status: verified` fixture was changed to
+   `unreviewed`; a schema-aware regression proves that `verified` is rejected
+   and an exact schema-valid unreviewed record maps only to `partial`.

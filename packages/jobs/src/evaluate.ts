@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { WorkspaceSnapshot } from "../../core/src/types";
 import type { EvaluationInput, ProvenanceSnapshot, StoredJob } from "../../storage/src/repository";
 import { classify, evaluationRules, gate, taxonomy } from "./rules";
-import type { EvaluationResult, EvidenceMapping, EvidenceMappingStatus, ExtractedJob, Gate } from "./types";
+import type { EvaluationResult, EvidenceMapping, ExtractedJob, Gate } from "./types";
 
 type Verified<T> = { value: T | null; verification_status: string; provenance: Array<{ source_type: string; source_ref: string }> };
 type Profile = {
@@ -82,7 +82,17 @@ function gatesFor(archetype: EvaluationResult["archetype"], extracted: Extracted
     language: (() => {
       const germanRequirement = /german\s+(b2|c1)/i.exec(languages ?? "")?.[1]?.toUpperCase() as "B2" | "C1" | undefined;
       const englishAlternative = germanRequirement !== undefined && hasAcceptedEnglishAlternative(languages, germanRequirement);
-      if (!germanRequirement || englishAlternative) return gate("language", "PASS", false, "No German B2/C1-only requirement");
+      if (!germanRequirement) return gate("language", "PASS", false, "No German B2/C1 requirement");
+      if (englishAlternative) {
+        const english = profile.languages?.english;
+        if (verified(english) && !levelAtLeast(english.value.self_assessed_level, germanRequirement)) {
+          return gate("language", "BLOCKED", true, "English alternative conflicts with verified level", ["profile.languages.english"]);
+        }
+        if (verified(english)) {
+          return gate("language", "PASS", true, "English alternative is verified", ["profile.languages.english"]);
+        }
+        return gate("language", "VERIFY", true, `English alternative needs verification`);
+      }
       const german = profile.languages?.german;
       if (verified(german) && !levelAtLeast(german.value.self_assessed_level, germanRequirement)) {
         return gate("language", "BLOCKED", true, `German ${germanRequirement} conflicts with verified level`, ["profile.languages.german"]);
@@ -125,8 +135,7 @@ function mappingFor(requirement: ExtractedJob["requirements"][number], evidence:
   if (disqualified) return { id, requirementId: requirement.id, status: "unknown", evidenceIds: [], credit: evaluationRules.mapping_credits.unknown };
   const exact = eligibleEvidence.find((record) => record.statement.toLowerCase().includes(text));
   if (exact) {
-    const status: EvidenceMappingStatus = exact.reviewer_status === "verified" ? "proven" : "partial";
-    return { id, requirementId: requirement.id, status, evidenceIds: [exact.id], credit: evaluationRules.mapping_credits[status] };
+    return { id, requirementId: requirement.id, status: "partial", evidenceIds: [exact.id], credit: evaluationRules.mapping_credits.partial };
   }
   const transferable = eligibleEvidence.find((record) => record.kind === "hardware" && /hardware|server|cabl/.test(text));
   if (transferable) return { id, requirementId: requirement.id, status: "transferable", evidenceIds: [transferable.id], credit: evaluationRules.mapping_credits.transferable };

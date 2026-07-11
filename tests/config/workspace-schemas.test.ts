@@ -115,6 +115,10 @@ test("evidence enforces reviewer status for each established evidence kind", asy
     expect(() => validateWorkspaceFile("evidence", evidence)).toThrow();
   }
 
+  const invalidVerified = await readExample("evidence");
+  invalidVerified.records.find((record: { id: string }) => record.id === "PC_HARDWARE").reviewer_status = "verified";
+  expect(() => validateWorkspaceFile("evidence", invalidVerified)).toThrow();
+
   const evidence = await readExample("evidence");
   evidence.records.find((record: { id: string }) => record.id === "HOME_LAB_PLAN").reviewer_status =
     "unreviewed";
