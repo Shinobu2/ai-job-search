@@ -33,10 +33,55 @@ function decodeHtml(value: string): string {
   });
 }
 
+function stylesheetHiddenClasses(raw: string): Set<string> {
+  const classes = new Set<string>();
+  for (const style of raw.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi)) {
+    for (const rule of style[1].matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (!/(?:^|;)\s*display\s*:\s*none\s*(?:!important\s*)?(?:;|$)/i.test(rule[2])) continue;
+      for (const selector of rule[1].split(",")) {
+        const match = selector.trim().match(/^\.([\w-]+)$/);
+        if (match) classes.add(match[1]);
+      }
+    }
+  }
+  return classes;
+}
+
+function isHiddenElement(attributes: string, hiddenClasses: Set<string>): boolean {
+  if (/(?:^|\s)hidden(?:\s|=|$)/i.test(attributes)) return true;
+  if (/\bstyle\s*=\s*(["'])[^"']*\bdisplay\s*:\s*none\b[^"']*\1/i.test(attributes)) return true;
+  const classes = attributes.match(/\bclass\s*=\s*(["'])(.*?)\1/i)?.[2]?.split(/\s+/) ?? [];
+  return classes.some((className) => hiddenClasses.has(className));
+}
+
+function removeHiddenHtml(raw: string, hiddenClasses: Set<string>): string {
+  const voidElements = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]);
+  const elements: boolean[] = [];
+  let hiddenDepth = 0;
+  return raw.replace(/<[^>]+>|[^<]+/g, (token) => {
+    const closing = token.match(/^<\s*\/\s*[\w:-]+[^>]*>$/);
+    if (closing) {
+      const hidden = elements.pop();
+      if (hidden) {
+        hiddenDepth--;
+        return "";
+      }
+      return hiddenDepth ? "" : token;
+    }
+    const opening = token.match(/^<\s*([\w:-]+)\b([^>]*)>$/);
+    if (!opening) return hiddenDepth ? "" : token;
+    const hidden = hiddenDepth > 0 || isHiddenElement(opening[2], hiddenClasses);
+    if (voidElements.has(opening[1].toLowerCase()) || /\/\s*>$/.test(token)) return hiddenDepth || hidden ? "" : token;
+    elements.push(hidden);
+    if (hidden) hiddenDepth++;
+    return hidden ? "" : token;
+  });
+}
+
 function visibleHtmlText(raw: string): string {
+  const hiddenClasses = stylesheetHiddenClasses(raw);
   return decodeHtml(
-    raw
-      .replace(/<!--([\s\S]*?)-->/g, "")
+    removeHiddenHtml(raw.replace(/<!--([\s\S]*?)-->/g, ""), hiddenClasses)
       .replace(/<(script|style|head)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "")
       .replace(/<\/?(?:p|div|h[1-6]|li|br|tr|section|article)\b[^>]*>/gi, "\n")
       .replace(/<[^>]+>/g, " ")

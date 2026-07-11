@@ -86,7 +86,7 @@ test("persists a BOM-prefixed local text source that hashes to its stored raw ha
   }
 });
 
-test("uses visible local HTML text while retaining the original source", async () => {
+test("omits CSS and attribute-hidden local HTML text while retaining the original source", async () => {
   const fixture = await repository();
   const file = join(fixtureDirectory, "local-html.html");
   try {
