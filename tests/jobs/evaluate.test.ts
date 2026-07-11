@@ -65,6 +65,28 @@ test("blocks reliable role requirements that contradict verified candidate facts
   }
 });
 
+test("ignores rejected, expired, and unknown profile values when evaluating gates", async () => {
+  const text = await readFile(join(fixtureDirectory, "own-car.md"), "utf8");
+  const extracted = extractVacancy(text);
+  for (const verification_status of ["rejected", "expired", "unknown"]) {
+    const result = evaluateVacancy({ id: `car_${verification_status}`, title: extracted.fields.title.value, company: null, location: null }, extracted, {
+      ...workspace,
+      profile: {
+        ...(workspace.profile as object),
+        transport: { has_car: { value: false, verification_status, provenance: [{ source_type: "user_statement", source_ref: "test" }] } },
+      },
+    }, "2026-07-12");
+    expect(result.gates).toContainEqual(expect.objectContaining({ id: "transport", status: "VERIFY" }));
+  }
+});
+
+test("blocks insufficient German when English is not explicitly accepted as an alternative", async () => {
+  for (const languages of ["German B2 required; english not accepted", "German B2 required; english preferred"]) {
+    const result = await evaluateText(`# Hardware Technician\nSkills: PC hardware\nLanguages: ${languages}\n`);
+    expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "BLOCKED" }));
+  }
+});
+
 test("keeps an unknown shift as VERIFY rather than assuming it is suitable", async () => {
   const result = await evaluateFixture("unknown-shift.md");
   expect(result.gates).toContainEqual(expect.objectContaining({ id: "shift", status: "VERIFY" }));
@@ -104,6 +126,35 @@ test("maps every material requirement once without promoting informal, planned, 
   } }, "2026-07-12").mappings;
   expect(restrictedMappings.map((mapping) => mapping.status)).toEqual(["contradicted", "unknown", "unknown", "missing"]);
   expect(restrictedMappings.flatMap((mapping) => mapping.evidenceIds)).toEqual([]);
+});
+
+test("does not turn home-lab, planned, or theory evidence into ordinary skills", async () => {
+  const extracted = extractVacancy("# Hardware Technician\nSkills: PC hardware\n");
+  const restricted: ExtractedJob = {
+    ...extracted,
+    requirements: [
+      { id: "planned", type: "skill", text: "hardware", spans: [], rule_ids: [] },
+      { id: "home_lab", type: "skill", text: "hardware troubleshooting", spans: [], rule_ids: [] },
+      { id: "home_lab_transferable", type: "skill", text: "server", spans: [], rule_ids: [] },
+      { id: "theory", type: "skill", text: "networking", spans: [], rule_ids: [] },
+    ],
+  };
+  const result = evaluateVacancy({ id: "disqualified_evidence", title: null, company: null, location: null }, restricted, {
+    ...workspace,
+    evidence: {
+      records: [
+        { id: "PLANNED", kind: "planned_project", statement: "Planned hardware project", reviewer_status: "unreviewed" },
+        { id: "HOME_LAB", kind: "hardware", statement: "Home lab hardware troubleshooting", reviewer_status: "unreviewed" },
+        { id: "THEORY", kind: "networking", statement: "Networking theory", reviewer_status: "unreviewed" },
+      ],
+    },
+  }, "2026-07-12");
+  expect(result.mappings.map((mapping) => ({ status: mapping.status, evidenceIds: mapping.evidenceIds }))).toEqual([
+    { status: "unknown", evidenceIds: [] },
+    { status: "unknown", evidenceIds: [] },
+    { status: "unknown", evidenceIds: [] },
+    { status: "unknown", evidenceIds: [] },
+  ]);
 });
 
 test("is deterministic, makes blockers override fit, and keeps fit independent from verified survival facts", async () => {

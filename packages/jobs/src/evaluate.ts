@@ -19,7 +19,7 @@ function field(extracted: ExtractedJob, name: string): string | null {
 }
 
 function verified<T>(value: Verified<T> | undefined): value is Verified<T> & { value: T } {
-  return value?.verification_status !== "unknown" && value?.value !== null && value?.value !== undefined;
+  return (value?.verification_status === "user_confirmed" || value?.verification_status === "document_verified") && value.value !== null && value.value !== undefined;
 }
 
 function levelAtLeast(actual: string | undefined, required: "B2" | "C1"): boolean {
@@ -37,6 +37,12 @@ function evidenceOf(workspace: WorkspaceSnapshot): Evidence[] {
 
 function includes(text: string | null, pattern: RegExp): boolean {
   return pattern.test(text ?? "");
+}
+
+function hasAcceptedEnglishAlternative(languages: string | null, germanRequirement: "B2" | "C1"): boolean {
+  const text = languages ?? "";
+  return new RegExp(`german\\s+${germanRequirement}\\s*(?:required\\s*)?(?:or|/)\\s*english|english\\s*(?:or|/)\\s*german\\s+${germanRequirement}`, "i").test(text)
+    || /\benglish\s+(?:is\s+)?(?:accepted|allowed|sufficient|ok(?:ay)?)\b/i.test(text);
 }
 
 function gatesFor(archetype: EvaluationResult["archetype"], extracted: ExtractedJob, workspace: WorkspaceSnapshot, asOf: string): Gate[] {
@@ -75,7 +81,7 @@ function gatesFor(archetype: EvaluationResult["archetype"], extracted: Extracted
       : gate("facilities", "PASS", false, "No unsupported electrical or HVAC requirement"),
     language: (() => {
       const germanRequirement = /german\s+(b2|c1)/i.exec(languages ?? "")?.[1]?.toUpperCase() as "B2" | "C1" | undefined;
-      const englishAlternative = includes(languages, /english/);
+      const englishAlternative = germanRequirement !== undefined && hasAcceptedEnglishAlternative(languages, germanRequirement);
       if (!germanRequirement || englishAlternative) return gate("language", "PASS", false, "No German B2/C1-only requirement");
       const german = profile.languages?.german;
       if (verified(german) && !levelAtLeast(german.value.self_assessed_level, germanRequirement)) {
@@ -107,15 +113,19 @@ function mappingFor(requirement: ExtractedJob["requirements"][number], evidence:
   const id = `mapping_${requirement.id}`;
   const unknownClaim = /home lab|planned|theory/.test(text);
   const discord = evidence.find((record) => record.kind === "informal_assistance");
+  const eligibleEvidence = evidence.filter((record) => record.kind !== "planned_project" && !/home lab|planned|theory/i.test(record.statement));
   if (/support|help.?desk|ticket/.test(text) && discord) return { id, requirementId: requirement.id, status: "contradicted", evidenceIds: [], credit: evaluationRules.mapping_credits.contradicted };
   if (unknownClaim) return { id, requirementId: requirement.id, status: "unknown", evidenceIds: [], credit: evaluationRules.mapping_credits.unknown };
   if (/education|ausbildung|degree/.test(text)) return { id, requirementId: requirement.id, status: "missing", evidenceIds: [], credit: evaluationRules.mapping_credits.missing };
-  const exact = evidence.find((record) => record.kind !== "planned_project" && record.statement.toLowerCase().includes(text));
+  const disqualified = evidence.find((record) => (record.kind === "planned_project" || /home lab|planned|theory/i.test(record.statement))
+    && (record.statement.toLowerCase().includes(text) || (record.kind === "hardware" && /hardware|server|cabl/.test(text))));
+  if (disqualified) return { id, requirementId: requirement.id, status: "unknown", evidenceIds: [], credit: evaluationRules.mapping_credits.unknown };
+  const exact = eligibleEvidence.find((record) => record.statement.toLowerCase().includes(text));
   if (exact) {
     const status: EvidenceMappingStatus = exact.reviewer_status === "verified" ? "proven" : "partial";
     return { id, requirementId: requirement.id, status, evidenceIds: [exact.id], credit: evaluationRules.mapping_credits[status] };
   }
-  const transferable = evidence.find((record) => record.kind === "hardware" && /hardware|server|cabl/.test(text));
+  const transferable = eligibleEvidence.find((record) => record.kind === "hardware" && /hardware|server|cabl/.test(text));
   if (transferable) return { id, requirementId: requirement.id, status: "transferable", evidenceIds: [transferable.id], credit: evaluationRules.mapping_credits.transferable };
   return { id, requirementId: requirement.id, status: "missing", evidenceIds: [], credit: evaluationRules.mapping_credits.missing };
 }

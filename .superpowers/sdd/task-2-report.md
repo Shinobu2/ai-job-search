@@ -67,3 +67,33 @@ behavior was added. Task 1 import and extraction were consumed unchanged.
 - Salary blocks only when an explicit net-monthly amount can be compared to a
   verified candidate floor. Gross or ambiguous salary remains VERIFY rather
   than receiving a fabricated conversion.
+
+## P1 review corrections
+
+### Root causes
+
+1. `verified()` accepted every status except `unknown`, so rejected and expired
+   profile values could block gates.
+2. The language gate treated any lowercase `english` mention as an alternative,
+   including explicit rejection and preference-only wording.
+3. Evidence matching filtered planned-project kinds only in the exact path;
+   home-lab/planned/theory statements could still receive exact or transferable
+   ordinary-skill credit.
+
+### RED
+
+`bun test tests/jobs/evaluate.test.ts` exited 1 with three targeted regressions:
+
+1. A rejected false car value produced a `BLOCKED` transport gate rather than
+   `VERIFY`.
+2. `German B2 required; english not accepted` produced a `PASS` language gate.
+3. Home-lab hardware and networking-theory records produced `partial`, and a
+   home-lab hardware record produced `transferable`, mappings rather than
+   evidence-free `unknown` mappings.
+
+### GREEN
+
+`bun test tests/jobs/evaluate.test.ts` exited 0: 10 pass, 0 fail, 49
+expectations. The evaluator now limits verified values to `user_confirmed` and
+`document_verified`, recognizes only explicit English alternatives, and
+filters home-lab/planned/theory evidence before exact or transferable matching.
