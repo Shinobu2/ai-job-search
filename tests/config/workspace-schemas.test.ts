@@ -107,6 +107,21 @@ test("evidence rejects professional-support claims for informal assistance", asy
   expect(() => validateWorkspaceFile("evidence", evidence)).toThrow();
 });
 
+test("evidence enforces reviewer status for each established evidence kind", async () => {
+  for (const id of ["PC_HARDWARE", "ROUTER", "DISCORD_ASSISTANCE"]) {
+    const evidence = await readExample("evidence");
+    evidence.records.find((record: { id: string }) => record.id === id).reviewer_status = "UNKNOWN";
+
+    expect(() => validateWorkspaceFile("evidence", evidence)).toThrow();
+  }
+
+  const evidence = await readExample("evidence");
+  evidence.records.find((record: { id: string }) => record.id === "HOME_LAB_PLAN").reviewer_status =
+    "unreviewed";
+
+  expect(() => validateWorkspaceFile("evidence", evidence)).toThrow();
+});
+
 test("search example has no duplicate candidate agencies policy", async () => {
   const search = await readExample("search");
 

@@ -38,6 +38,18 @@
                 }
               }
             }
+          },
+          {
+            "if": { "properties": { "kind": { "const": "planned_project" } } },
+            "then": { "properties": { "reviewer_status": { "const": "UNKNOWN" } } }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": { "enum": ["hardware", "networking", "informal_assistance"] }
+              }
+            },
+            "then": { "properties": { "reviewer_status": { "const": "unreviewed" } } }
           }
         ]
       }
