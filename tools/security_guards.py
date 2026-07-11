@@ -16,14 +16,17 @@ Checks:
 2. .gitignore — the personal-data ignore rules must all still be present.
    Catches weakening that would make future users silently commit their
    tracker, profile exports, or application archives.
-3. .agents/**/package.json — no npm/bun lifecycle scripts (preinstall,
-   install, postinstall, prepare, prepack) and no trustedDependencies.
+3. package.json and .agents/**/package.json — no npm/bun lifecycle scripts
+   (preinstall, install, postinstall, prepare, prepack) and no
+   trustedDependencies.
    Catches code execution smuggled into `bun install`.
+4. workspace/** — no files may be tracked, because it stores personal data.
 
 Stdlib only. Exit 0 on success, 1 with a failure list otherwise.
 """
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -53,6 +56,8 @@ REQUIRED_IGNORE_RULES = [
     "documents/references/**",
     "documents/applications/**",
     "job_search_tracker.csv",
+    ".vs/",
+    "workspace/",
 ]
 
 FORBIDDEN_SCRIPTS = {"preinstall", "install", "postinstall", "prepare", "prepack"}
@@ -98,10 +103,14 @@ def check_gitignore() -> None:
 
 
 def check_package_manifests() -> None:
-    manifests = [
+    root_manifest = ROOT / "package.json"
+    manifests = [root_manifest] + [
         p for p in ROOT.glob(".agents/**/package.json") if "node_modules" not in p.parts
     ]
-    if not manifests:
+    if not root_manifest.exists():
+        errors.append("package.json: root manifest is missing")
+    agent_manifests = manifests[1:]
+    if not agent_manifests:
         errors.append(".agents: no package.json files found - glob roots are wrong or the tree moved")
     for manifest in manifests:
         relpath = manifest.relative_to(ROOT)
@@ -123,10 +132,29 @@ def check_package_manifests() -> None:
             )
 
 
+def check_tracked_workspace_files() -> None:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "--", "workspace"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return
+    if result.returncode != 0:
+        return
+    for path in filter(None, result.stdout.splitlines()):
+        errors.append(
+            f"{path}: tracked workspace file is forbidden - workspace data is personal and must remain local."
+        )
+
+
 def main() -> int:
     check_permissions()
     check_gitignore()
     check_package_manifests()
+    check_tracked_workspace_files()
     if errors:
         print(f"security_guards: {len(errors)} failure(s)")
         for err in errors:

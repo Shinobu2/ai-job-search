@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "profile.schema.json",
+  "type": "object",
+  "required": ["schema_version", "targets", "locations", "availability", "transport", "languages", "education", "legal", "constraints", "compensation"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "targets": {
+      "type": "object",
+      "required": ["primary_archetypes", "fallback_archetypes", "agencies_policy"],
+      "properties": {
+        "primary_archetypes": { "$ref": "common.schema.json#/$defs/verifiedValue" },
+        "fallback_archetypes": { "$ref": "common.schema.json#/$defs/verifiedValue" },
+        "agencies_policy": { "$ref": "common.schema.json#/$defs/verifiedValue" }
+      },
+      "additionalProperties": false
+    },
+    "locations": {
+      "type": "object",
+      "required": ["city", "radius_km", "public_transport_required"],
+      "properties": {
+        "city": { "$ref": "common.schema.json#/$defs/verifiedValue" },
+        "radius_km": { "$ref": "common.schema.json#/$defs/verifiedValue" },
+        "public_transport_required": { "$ref": "common.schema.json#/$defs/verifiedValue" }
+      },
+      "additionalProperties": false
+    },
+    "availability": {
+      "type": "object",
+      "required": ["target_start"],
+      "properties": { "target_start": { "$ref": "common.schema.json#/$defs/verifiedValue" } },
+      "additionalProperties": false
+    },
+    "transport": {
+      "type": "object",
+      "required": ["driver_licence", "has_car"],
+      "properties": {
+        "driver_licence": { "$ref": "common.schema.json#/$defs/verifiedValue" },
+        "has_car": { "$ref": "common.schema.json#/$defs/verifiedValue" }
+      },
+      "additionalProperties": false
+    },
+    "languages": {
+      "type": "object",
+      "required": ["english", "german"],
+      "properties": {
+        "english": { "$ref": "common.schema.json#/$defs/verifiedValue" },
+        "german": { "$ref": "common.schema.json#/$defs/verifiedValue" }
+      },
+      "additionalProperties": false
+    },
+    "education": {
+      "type": "object",
+      "required": ["status"],
+      "properties": { "status": { "$ref": "common.schema.json#/$defs/verifiedValue" } },
+      "additionalProperties": false
+    },
+    "legal": {
+      "type": "object",
+      "required": ["work_authorization", "education_equivalence"],
+      "properties": {
+        "work_authorization": {
+          "type": "object",
+          "required": ["value", "verification_status", "provenance"],
+          "properties": {
+            "value": { "type": "null" },
+            "verification_status": { "const": "unknown" },
+            "provenance": { "type": "array", "maxItems": 0 }
+          },
+          "additionalProperties": false
+        },
+        "education_equivalence": {
+          "type": "object",
+          "required": ["value", "verification_status", "provenance"],
+          "properties": {
+            "value": { "type": "null" },
+            "verification_status": { "const": "unknown" },
+            "provenance": { "type": "array", "maxItems": 0 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "constraints": {
+      "type": "object",
+      "required": ["night_shifts", "continuous_heavy_work"],
+      "properties": {
+        "night_shifts": { "$ref": "common.schema.json#/$defs/verifiedValue" },
+        "continuous_heavy_work": { "$ref": "common.schema.json#/$defs/verifiedValue" }
+      },
+      "additionalProperties": false
+    },
+    "compensation": {
+      "type": "object",
+      "required": ["net_monthly_estimate"],
+      "properties": { "net_monthly_estimate": { "$ref": "common.schema.json#/$defs/verifiedValue" } },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

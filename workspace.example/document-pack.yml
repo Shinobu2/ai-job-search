@@ -1,0 +1,6 @@
+schema_version: 1
+documents:
+  education_documents:
+    value: stated; document verification pending
+    verification_status: user_confirmed
+    provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]

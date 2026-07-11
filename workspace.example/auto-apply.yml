@@ -1,0 +1,3 @@
+schema_version: 1
+configured_mode: supervised_auto
+human_review_required: true

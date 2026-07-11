@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "common.schema.json",
+  "$defs": {
+    "verificationStatus": {
+      "type": "string",
+      "enum": ["unknown", "user_confirmed", "document_verified", "rejected", "expired"]
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["source_type", "source_ref"],
+      "properties": {
+        "source_type": { "type": "string", "enum": ["user_statement", "document", "system"] },
+        "source_ref": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "verifiedValue": {
+      "type": "object",
+      "required": ["value", "verification_status", "provenance"],
+      "properties": {
+        "value": {},
+        "verification_status": { "$ref": "#/$defs/verificationStatus" },
+        "provenance": { "type": "array", "items": { "$ref": "#/$defs/provenance" } }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,78 @@
+schema_version: 1
+targets:
+  primary_archetypes:
+    value: [DCT_A, DCT_AT]
+    verification_status: user_confirmed
+    provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]
+  fallback_archetypes:
+    value: [F]
+    verification_status: user_confirmed
+    provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]
+  agencies_policy:
+    value: fallback_only
+    verification_status: user_confirmed
+    provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]
+locations:
+  city:
+    value: { name: Frankfurt, country: Germany }
+    verification_status: user_confirmed
+    provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]
+  radius_km:
+    value: 40
+    verification_status: user_confirmed
+    provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]
+  public_transport_required:
+    value: true
+    verification_status: user_confirmed
+    provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]
+availability:
+  target_start:
+    value: { earliest: '2026-08-15', latest: '2026-08-31' }
+    verification_status: user_confirmed
+    provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]
+transport:
+  driver_licence:
+    value: true
+    verification_status: user_confirmed
+    provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]
+  has_car:
+    value: false
+    verification_status: user_confirmed
+    provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]
+languages:
+  english:
+    value: { self_assessed_level: B2 }
+    verification_status: user_confirmed
+    provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]
+  german:
+    value: { self_assessed_level: A2 }
+    verification_status: user_confirmed
+    provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]
+education:
+  status:
+    value: stated; documentary verification pending
+    verification_status: user_confirmed
+    provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]
+legal:
+  work_authorization:
+    value: null
+    verification_status: unknown
+    provenance: []
+  education_equivalence:
+    value: null
+    verification_status: unknown
+    provenance: []
+constraints:
+  night_shifts:
+    value: blocked
+    verification_status: user_confirmed
+    provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]
+  continuous_heavy_work:
+    value: blocked
+    verification_status: user_confirmed
+    provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]
+compensation:
+  net_monthly_estimate:
+    value: { floor_eur: 1750, target_eur: 2000 }
+    verification_status: user_confirmed
+    provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]

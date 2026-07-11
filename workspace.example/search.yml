@@ -1,0 +1,5 @@
+schema_version: 1
+agencies_policy:
+  value: fallback_only
+  verification_status: user_confirmed
+  provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]

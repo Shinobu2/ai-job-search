@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-bun.lock
 
 # Python
 __pycache__/
@@ -42,6 +41,9 @@ Thumbs.db
 
 # Local development worktrees
 .worktrees/
+
+# Local candidate workspace data
+workspace/
 
 # Local agent execution ledger and review artifacts
 .superpowers/

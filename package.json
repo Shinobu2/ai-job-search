@@ -1,0 +1,18 @@
+{
+  "name": "career-control-room",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup": "bun run scripts/cli.ts setup",
+    "doctor": "bun run scripts/cli.ts doctor",
+    "job:import": "bun run scripts/cli.ts job import",
+    "job:evaluate": "bun run scripts/cli.ts job evaluate",
+    "job:export": "bun run scripts/cli.ts job export",
+    "capabilities": "bun run scripts/cli.ts capabilities",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": { "ajv": "8.20.0", "yaml": "2.9.0" },
+  "devDependencies": { "@types/bun": "1.3.14", "typescript": "7.0.2" }
+}

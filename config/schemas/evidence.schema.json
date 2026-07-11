@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "evidence.schema.json",
+  "type": "object",
+  "required": ["schema_version", "records"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "statement", "reviewer_status", "provenance"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "enum": ["hardware", "networking", "informal_assistance", "planned_project"] },
+          "statement": { "type": "string", "minLength": 1 },
+          "reviewer_status": { "type": "string", "enum": ["unreviewed", "UNKNOWN"] },
+          "provenance": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/provenance" } }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

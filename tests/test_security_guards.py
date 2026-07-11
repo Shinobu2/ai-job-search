@@ -41,7 +41,10 @@ class GuardRepoFixture(unittest.TestCase):
         self.write_settings(sorted(security_guards.ALLOWED_PERMISSIONS))
 
         self.gitignore = self.root / ".gitignore"
-        self.write_gitignore(security_guards.REQUIRED_IGNORE_RULES)
+        self.write_gitignore(security_guards.REQUIRED_IGNORE_RULES + [".vs/", "workspace/"])
+
+        self.root_manifest = self.root / "package.json"
+        self.write_manifest({"name": "workspace-root", "scripts": {"test": "bun test"}}, self.root_manifest)
 
         self.manifest = self.root / ".agents" / "skills" / "example-search" / "cli" / "package.json"
         self.manifest.parent.mkdir(parents=True)
@@ -112,6 +115,13 @@ class GitignoreGuardTests(GuardRepoFixture):
 
 
 class ManifestGuardTests(GuardRepoFixture):
+    def test_root_lifecycle_script_fails(self):
+        self.write_manifest({"name": "workspace-root", "scripts": {"prepare": "echo test"}}, self.root_manifest)
+        result = run_guards(self.root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("package.json", result.stdout)
+        self.assertIn("lifecycle script", result.stdout)
+
     def test_each_lifecycle_script_fails(self):
         for script in sorted(security_guards.FORBIDDEN_SCRIPTS):
             with self.subTest(script=script):
@@ -156,6 +166,20 @@ class ManifestGuardTests(GuardRepoFixture):
         result = run_guards(self.root)
         self.assertEqual(result.returncode, 1)
         self.assertIn("no package.json files found", result.stdout)
+
+
+class WorkspaceGuardTests(GuardRepoFixture):
+    def test_tracked_workspace_file_fails(self):
+        workspace_file = self.root / "workspace" / "profile.yml"
+        workspace_file.parent.mkdir()
+        workspace_file.write_text("schema_version: 1\n")
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        subprocess.run(["git", "-C", str(self.root), "add", "-f", "workspace/profile.yml"], check=True)
+
+        result = run_guards(self.root)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("tracked workspace file", result.stdout)
 
 
 class RealRepoTests(unittest.TestCase):

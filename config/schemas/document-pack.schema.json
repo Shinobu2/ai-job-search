@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "document-pack.schema.json",
+  "type": "object",
+  "required": ["schema_version", "documents"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "documents": {
+      "type": "object",
+      "required": ["education_documents"],
+      "properties": { "education_documents": { "$ref": "common.schema.json#/$defs/verifiedValue" } },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
