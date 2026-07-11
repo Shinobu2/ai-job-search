@@ -86,3 +86,48 @@ implemented.
   JSON-valid provenance. Event update/delete triggers reject mutation.
 - Changes are scoped to Task 2. The CLI only exposes a read-only capability
   listing; it does not add the future job import/evaluation/export workflows.
+
+## Review fix wave: evidence references and run-key serialization
+
+### Root causes
+
+1. `EvaluationInput.evidenceMappings` was structurally typed as an arbitrary
+   record and `insertMappings()` persisted `JSON.stringify(row)`. A caller
+   could therefore send mutable evidence content and turn SQLite into a second
+   Evidence Vault.
+2. The original `evidence_mappings.requirement_id` column had no foreign key
+   to `extracted_requirements`, so an evaluation could persist an orphaned
+   mapping.
+3. `persistEvaluation()` read `run_key` before it started its immediate
+   transaction. A competing writer could insert the same key in the resulting
+   check-then-act window.
+
+### RED
+
+`C:\Users\Emperor\.bun\bin\bun.exe test tests/storage/migrations.test.ts tests/storage/persistence.test.ts`
+exited 1 with all three intended failures:
+
+- expected migration `003_evidence_mapping_requirement_fk.sql` was absent;
+- a mapping containing `mutableEvidenceContent` was accepted; and
+- a mapping pointing to `req_missing` committed instead of rolling back.
+
+### Fix and GREEN
+
+- Added `003_evidence_mapping_requirement_fk.sql`, which rebuilds the mapping
+  table with `requirement_id REFERENCES extracted_requirements(id)` without
+  changing an already-checksummed migration.
+- Replaced arbitrary mapping records with an explicit ID/hash/provenance input
+  shape. Runtime validation rejects extra properties and persistence writes a
+  freshly constructed whitelist payload, never caller-provided evidence text.
+- Moved the duplicate lookup inside the same `immediate()` transaction as the
+  insert. A two-connection regression injects a competing same-key write at
+  the duplicate lookup: the primary write succeeds while the competing writer
+  is locked out, proving there is no pre-transaction check window.
+
+1. `C:\Users\Emperor\.bun\bin\bun.exe test tests/storage/persistence.test.ts`
+   - Exit 0; 6 pass, 0 fail, 16 expectations, including the two-connection
+     run-key regression.
+2. `C:\Users\Emperor\.bun\bin\bun.exe test tests/storage/migrations.test.ts tests/storage/persistence.test.ts`
+   - Exit 0; 7 pass, 0 fail, 19 expectations.
+3. `C:\Users\Emperor\.bun\bin\bun.exe run typecheck`
+   - Exit 0; `tsc --noEmit` completed cleanly.

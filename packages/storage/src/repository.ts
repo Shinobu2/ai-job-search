@@ -35,12 +35,20 @@ export interface EvaluationInput {
   evaluatorVersion: string;
   provenance: ProvenanceSnapshot[];
   requirements: Array<Record<string, unknown> & { id: string }>;
-  evidenceMappings: Array<Record<string, unknown> & { id: string; evidenceIds?: string[]; evidenceSnapshotHash?: string; requirementId?: string }>;
+  evidenceMappings: EvidenceMappingInput[];
   gateResults: Array<Record<string, unknown> & { id: string }>;
   fitScores: Array<Record<string, unknown> & { id: string }>;
   survivalScores: Array<Record<string, unknown> & { id: string }>;
   applicationTiers: Array<Record<string, unknown> & { id: string }>;
   recommendations: Array<Record<string, unknown> & { id: string }>;
+}
+
+export interface EvidenceMappingInput {
+  id: string;
+  requirementId: string;
+  evidenceIds: string[];
+  evidenceSnapshotHash: string;
+  provenance: ProvenanceSnapshot[];
 }
 
 const hashPattern = /^[a-f0-9]{64}$/;
@@ -95,14 +103,11 @@ export class StorageRepository {
     for (const group of [input.requirements, input.evidenceMappings, input.gateResults, input.fitScores, input.survivalScores, input.applicationTiers, input.recommendations]) {
       if (!Array.isArray(group) || group.some((row) => typeof row.id !== "string" || row.id.length === 0)) throw new Error("every derived row requires an id");
     }
-    for (const mapping of input.evidenceMappings) {
-      requireHash(mapping.evidenceSnapshotHash ?? "", "evidenceSnapshotHash");
-    }
-
-    const existing = this.db.query("SELECT id FROM evaluation_runs WHERE run_key = ?").get(input.runKey) as { id: string } | null;
-    if (existing) return { id: existing.id, existing: true };
+    for (const mapping of input.evidenceMappings) this.validateMapping(mapping);
 
     const write = this.db.transaction(() => {
+      const existing = this.db.query("SELECT id FROM evaluation_runs WHERE run_key = ?").get(input.runKey) as { id: string } | null;
+      if (existing) return { id: existing.id, existing: true };
       const createdAt = now();
       this.db.query(
         "INSERT INTO evaluation_runs (id, job_id, run_key, semantic_fingerprint, created_at, evaluator_version, provenance_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -115,9 +120,9 @@ export class StorageRepository {
       this.insertDerived("application_tiers", input.applicationTiers, input, createdAt);
       this.insertDerived("recommendations", input.recommendations, input, createdAt);
       this.event("evaluation.persisted", "evaluation_run", input.id, "system", null, null, { run_key: input.runKey });
+      return { id: input.id, existing: false };
     });
-    write.immediate();
-    return { id: input.id, existing: false };
+    return write.immediate() as { id: string; existing: boolean };
   }
 
   private insertDerived(table: string, rows: Array<Record<string, unknown> & { id: string }>, input: EvaluationInput, createdAt: string): void {
@@ -128,8 +133,27 @@ export class StorageRepository {
   private insertMappings(rows: EvaluationInput["evidenceMappings"], input: EvaluationInput, createdAt: string): void {
     const query = this.db.query("INSERT INTO evidence_mappings (id, evaluation_run_id, requirement_id, evidence_ids_json, evidence_snapshot_hash, payload_json, created_at, evaluator_version, provenance_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
     for (const row of rows) {
-      query.run(row.id, input.id, row.requirementId ?? null, JSON.stringify(row.evidenceIds ?? []), row.evidenceSnapshotHash ?? "", JSON.stringify(row), createdAt, input.evaluatorVersion, JSON.stringify(input.provenance));
+      const payload = {
+        id: row.id,
+        requirement_id: row.requirementId,
+        evidence_ids: row.evidenceIds,
+        evidence_snapshot_hash: row.evidenceSnapshotHash,
+        provenance: row.provenance,
+      };
+      query.run(row.id, input.id, row.requirementId, JSON.stringify(row.evidenceIds), row.evidenceSnapshotHash, JSON.stringify(payload), createdAt, input.evaluatorVersion, JSON.stringify(row.provenance));
     }
+  }
+
+  private validateMapping(mapping: EvidenceMappingInput): void {
+    const allowed = new Set(["id", "requirementId", "evidenceIds", "evidenceSnapshotHash", "provenance"]);
+    if (Object.keys(mapping).some((key) => !allowed.has(key))) throw new Error("evidence mapping contains unsupported fields");
+    requireValue(mapping.id, "evidenceMapping.id");
+    requireValue(mapping.requirementId, "evidenceMapping.requirementId");
+    if (!Array.isArray(mapping.evidenceIds) || mapping.evidenceIds.some((id) => typeof id !== "string" || id.length === 0)) {
+      throw new Error("evidenceMapping.evidenceIds must contain evidence IDs");
+    }
+    requireHash(mapping.evidenceSnapshotHash, "evidenceSnapshotHash");
+    if (!isProvenance(mapping.provenance)) throw new Error("evidence mapping provenance is required");
   }
 
   private event(eventType: string, entityType: string, entityId: string, actor: string, reason: string | null, reportHash: string | null, payload: Record<string, unknown>): void {

@@ -17,7 +17,7 @@ test("migrations create the Stage 1 schema, enforce foreign keys, and are repeat
     const first = migrate(db);
     const second = migrate(db);
 
-    expect(first.applied).toEqual(["001_stage1.sql", "002_capabilities.sql"]);
+    expect(first.applied).toEqual(["001_stage1.sql", "002_capabilities.sql", "003_evidence_mapping_requirement_fk.sql"]);
     expect(second.applied).toEqual([]);
     expect(db.query("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
     expect(db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'event_history'").get()).toBeDefined();
