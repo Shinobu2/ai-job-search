@@ -2,12 +2,16 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { validateWorkspaceFile, workspaceNames, type WorkspaceFileName } from "../packages/core/src/workspace";
+import { CapabilityRegistry } from "../packages/storage/src/capabilities";
+import { openDatabase } from "../packages/storage/src/database";
+import { migrate } from "../packages/storage/src/migrate";
 
 export interface SetupSummary {
   created: string[];
   updated: string[];
   unknown_paths: string[];
   unverified_paths: string[];
+  database_migrations: string[];
 }
 
 function mergeDefaults(defaultValue: unknown, existingValue: unknown): unknown {
@@ -48,7 +52,7 @@ async function replaceAtomically(path: string, contents: string): Promise<void> 
 export async function setupWorkspace(root: string): Promise<SetupSummary> {
   const workspaceDirectory = join(root, "workspace");
   await mkdir(workspaceDirectory, { recursive: true });
-  const summary: SetupSummary = { created: [], updated: [], unknown_paths: [], unverified_paths: [] };
+  const summary: SetupSummary = { created: [], updated: [], unknown_paths: [], unverified_paths: [], database_migrations: [] };
 
   for (const name of workspaceNames) {
     const filename = `${name}.yml`;
@@ -77,5 +81,12 @@ export async function setupWorkspace(root: string): Promise<SetupSummary> {
   summary.updated.sort();
   summary.unknown_paths.sort();
   summary.unverified_paths.sort();
+  const db = openDatabase(join(workspaceDirectory, "control-room.sqlite"));
+  try {
+    summary.database_migrations = migrate(db).applied;
+    new CapabilityRegistry(db).seed();
+  } finally {
+    db.close();
+  }
   return summary;
 }

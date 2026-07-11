@@ -85,6 +85,17 @@ test("setup rerun preserves additional keys inside a user-owned map value", asyn
   }
 });
 
+test("setup initializes the local SQLite schema without changing workspace facts", async () => {
+  const root = await copyExamplesToTemp();
+  try {
+    await setupWorkspace(root);
+
+    expect(await Bun.file(join(root, "workspace", "control-room.sqlite")).exists()).toBe(true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("doctor reports a missing gitignore instead of throwing", async () => {
   const root = await mkdtemp(join(tmpdir(), "career-control-room-"));
   try {

@@ -1,8 +1,9 @@
-import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parse } from "yaml";
 import { validateWorkspaceFile, workspaceNames } from "../packages/core/src/workspace";
+import { openDatabase } from "../packages/storage/src/database";
+import { migrate } from "../packages/storage/src/migrate";
 
 export interface DoctorReport {
   errors: string[];
@@ -42,8 +43,15 @@ export async function runDoctor(root: string, strict = false): Promise<DoctorRep
 
   const guard = Bun.spawnSync(["python", "tools/security_guards.py"], { cwd: root, stdout: "pipe", stderr: "pipe" });
   if (guard.exitCode !== 0) report.errors.push("security guards failed");
-  if (!existsSync(join(root, "packages", "storage", "src", "database.ts"))) {
-    report.warnings.push("SQLite initialization is unavailable until Task 2");
+  try {
+    const db = openDatabase(":memory:");
+    try {
+      migrate(db);
+    } finally {
+      db.close();
+    }
+  } catch (error) {
+    report.errors.push(error instanceof Error ? `SQLite initialization failed: ${error.message}` : "SQLite initialization failed");
   }
   return report;
 }
