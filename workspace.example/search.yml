@@ -20,3 +20,22 @@ discovery:
         - remote hands
       max_pages: 1
       page_size: 10
+    - id: jobsuche
+      enabled: false
+      mode: read_import_evaluate
+      country: DE
+      cities:
+        - Frankfurt
+        - Eschborn
+        - Offenbach
+        - Neu-Isenburg
+        - Langen
+        - Kelsterbach
+        - Darmstadt
+      keywords:
+        - data center technician
+        - rechenzentrumstechniker
+        - it systemelektroniker
+        - remote hands
+      max_pages: 1
+      page_size: 10

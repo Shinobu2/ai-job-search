@@ -10,3 +10,5 @@ globalThis.fetch = ((input: string | URL, init?: RequestInit) => {
   }
   return realFetch(new URL(`${requested.pathname}${requested.search}`, endpoint), init);
 }) as typeof fetch;
+
+export {};

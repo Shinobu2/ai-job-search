@@ -14,6 +14,7 @@ import { importVacancy } from "../packages/jobs/src/import";
 import { renderResultCard } from "../packages/jobs/src/card";
 import { StorageRepository, type StoredJob } from "../packages/storage/src/repository";
 import { discoverFreehire, type FreehireSourceConfig } from "../packages/search/src/freehire";
+import { discoverJobsuche, type JobsucheSourceConfig } from "../packages/search/src/jobsuche";
 
 type JobFlags = { id?: string; file?: string; text?: string };
 
@@ -108,19 +109,24 @@ async function runJob(root: string, command: string | undefined, arguments_: str
 }
 
 async function runSearch(root: string, sourceName: string | undefined, arguments_: string[]): Promise<void> {
-  if (sourceName !== "freehire" || arguments_.length > 0) throw new Error("Usage: search freehire");
+  if (!sourceName || arguments_.length > 0 || !["freehire", "jobsuche", "ba"].includes(sourceName)) throw new Error("Usage: search <freehire|jobsuche|ba>");
   const workspace = await loadWorkspace(root);
-  const sources = (workspace.search as { discovery?: { sources?: FreehireSourceConfig[] } }).discovery?.sources ?? [];
-  const source = sources.find((candidate) => candidate.id === "freehire");
-  if (!source) throw new Error("workspace/search.yml does not configure FreeHire");
+  const sourceId = sourceName === "ba" ? "jobsuche" : sourceName;
+  const sources = (workspace.search as { discovery?: { sources?: Array<FreehireSourceConfig | JobsucheSourceConfig> } }).discovery?.sources ?? [];
+  const source = sources.find((candidate) => candidate.id === sourceId);
+  if (!source) throw new Error(`workspace/search.yml does not configure ${sourceId === "freehire" ? "FreeHire" : "Jobsuche"}`);
   const { db, repository } = openRepository(root);
   try {
-    const results = await discoverFreehire(source, repository, workspace);
-    console.log(`FreeHire shortlist: ${results.length}`);
+    const jobsuche = source.id === "jobsuche";
+    const results = jobsuche
+      ? await discoverJobsuche(source, repository, workspace)
+      : await discoverFreehire(source, repository, workspace);
+    const sourceLabel = jobsuche ? "Jobsuche" : "FreeHire";
+    console.log(`${sourceLabel} shortlist: ${results.length}`);
     for (const result of results) {
       console.log("");
       console.log(renderResultCard({ ...result.evaluation, title: result.title, company: result.company }));
-      console.log(`Source: FreeHire ${result.sourceId} — ${result.sourceUrl}`);
+      console.log(`Source: ${sourceLabel} ${result.sourceId} — ${result.sourceUrl}`);
       console.log(`Import: ${result.reused ? "reused" : "created"}`);
     }
     console.log("No application was submitted.");
