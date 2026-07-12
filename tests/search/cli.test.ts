@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { validateWorkspaceFile } from "../../packages/core/src/workspace";
 
 const root = resolve(import.meta.dir, "../..");
 const cli = join(root, "scripts", "cli.ts");
@@ -10,6 +11,10 @@ const freehireFetchFixture = join(root, "tests", "search", "freehire-fetch.fixtu
 function payload(job: unknown) {
   return new Response(JSON.stringify({ data: job }), { headers: { "content-type": "application/json" } });
 }
+
+test("legacy schema-v1 search config remains valid until discovery is configured", () => {
+  expect(() => validateWorkspaceFile("search", { schema_version: 1 })).not.toThrow();
+});
 
 test("search freehire imports, evaluates, and prints a local shortlist without submission", async () => {
   const directory = await mkdtemp(join(tmpdir(), "career-control-room-search-cli-"));
