@@ -120,7 +120,9 @@ test("persistEvaluation rejects evidence content outside immutable mapping refer
       requirements: [{ id: "req_one" }],
       evidenceMappings: [{
         id: "mapping_one",
+        domainId: "mapping_domain_one",
         requirementId: "req_one",
+        domainRequirementId: "requirement_domain_one",
         evidenceIds: ["PC_HARDWARE"],
         evidenceSnapshotHash: "c".repeat(64),
         provenance,
@@ -143,7 +145,9 @@ test("an evidence mapping requires a persisted requirement and rolls back its ev
     const input = evaluationInput({
       evidenceMappings: [{
         id: "mapping_missing_requirement",
+        domainId: "mapping_domain_missing_requirement",
         requirementId: "req_missing",
+        domainRequirementId: "requirement_domain_missing",
         evidenceIds: ["ROUTER"],
         evidenceSnapshotHash: "c".repeat(64),
         provenance,

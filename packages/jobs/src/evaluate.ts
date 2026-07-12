@@ -208,6 +208,10 @@ export function buildEvaluationInput(result: EvaluationResult, extracted: Extrac
   ];
   const evidenceSnapshotHash = fingerprint(workspace.evidence);
   const id = derivedId("evaluation", result.fingerprint);
+  const requirementStorageIds = new Map(extracted.requirements.map((requirement) => [
+    requirement.id,
+    derivedId("requirement", `${result.fingerprint}:${requirement.id}`),
+  ]));
   return {
     id,
     jobId: result.jobId,
@@ -215,10 +219,18 @@ export function buildEvaluationInput(result: EvaluationResult, extracted: Extrac
     semanticFingerprint: result.fingerprint,
     evaluatorVersion: `${evaluationRules.evaluator_version}/${taxonomy.version}/${evaluationRules.version}`,
     provenance,
-    requirements: extracted.requirements.map((requirement) => ({ id: requirement.id, type: requirement.type, text: requirement.text, rule_ids: requirement.rule_ids })),
+    requirements: extracted.requirements.map((requirement) => ({
+      id: requirementStorageIds.get(requirement.id) as string,
+      domain_id: requirement.id,
+      type: requirement.type,
+      text: requirement.text,
+      rule_ids: requirement.rule_ids,
+    })),
     evidenceMappings: result.mappings.map((mapping) => ({
-      id: mapping.id,
-      requirementId: mapping.requirementId,
+      id: derivedId("mapping", `${result.fingerprint}:${mapping.id}`),
+      domainId: mapping.id,
+      requirementId: requirementStorageIds.get(mapping.requirementId) as string,
+      domainRequirementId: mapping.requirementId,
       evidenceIds: mapping.evidenceIds,
       evidenceSnapshotHash,
       provenance,

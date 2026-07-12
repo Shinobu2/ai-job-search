@@ -57,7 +57,9 @@ export interface StoredJobSource extends StoredJob {
 
 export interface EvidenceMappingInput {
   id: string;
+  domainId: string;
   requirementId: string;
+  domainRequirementId: string;
   evidenceIds: string[];
   evidenceSnapshotHash: string;
   provenance: ProvenanceSnapshot[];
@@ -122,8 +124,13 @@ export class StorageRepository {
         if (typeof domain_id !== "string" || domain_id.length === 0) throw new Error(`Evaluation ${run.id} has a gate without a domain ID`);
         return { ...gate, id: domain_id } as Gate;
       });
-    const mappings = rows<{ id: string; requirement_id: string; evidence_ids: string[]; mapping_status: EvidenceMapping["status"]; credit: number }>("evidence_mappings")
-      .map((mapping) => ({ id: mapping.id, requirementId: mapping.requirement_id, evidenceIds: mapping.evidence_ids, status: mapping.mapping_status, credit: mapping.credit }));
+    const mappings = rows<{ id: string; domain_id?: string; requirement_id: string; domain_requirement_id?: string; evidence_ids: string[]; mapping_status: EvidenceMapping["status"]; credit: number }>("evidence_mappings")
+      .map((mapping) => {
+        if (typeof mapping.domain_id !== "string" || mapping.domain_id.length === 0 || typeof mapping.domain_requirement_id !== "string" || mapping.domain_requirement_id.length === 0) {
+          throw new Error(`Evaluation ${run.id} has a mapping without domain IDs`);
+        }
+        return { id: mapping.domain_id, requirementId: mapping.domain_requirement_id, evidenceIds: mapping.evidence_ids, status: mapping.mapping_status, credit: mapping.credit };
+      });
     const fit = rows<{ score: number }>("fit_scores")[0]?.score;
     const survival = rows<{ score: number | null }>("survival_scores")[0]?.score;
     const tier = rows<{ tier: EvaluationResult["tier"]; confidence: EvaluationResult["confidence"] }>("application_tiers")[0];
@@ -211,7 +218,9 @@ export class StorageRepository {
     for (const row of rows) {
       const payload = {
         id: row.id,
+        domain_id: row.domainId,
         requirement_id: row.requirementId,
+        domain_requirement_id: row.domainRequirementId,
         evidence_ids: row.evidenceIds,
         evidence_snapshot_hash: row.evidenceSnapshotHash,
         provenance: row.provenance,
@@ -223,10 +232,12 @@ export class StorageRepository {
   }
 
   private validateMapping(mapping: EvidenceMappingInput): void {
-    const allowed = new Set(["id", "requirementId", "evidenceIds", "evidenceSnapshotHash", "provenance", "mappingStatus", "credit"]);
+    const allowed = new Set(["id", "domainId", "requirementId", "domainRequirementId", "evidenceIds", "evidenceSnapshotHash", "provenance", "mappingStatus", "credit"]);
     if (Object.keys(mapping).some((key) => !allowed.has(key))) throw new Error("evidence mapping contains unsupported fields");
     requireValue(mapping.id, "evidenceMapping.id");
+    requireValue(mapping.domainId, "evidenceMapping.domainId");
     requireValue(mapping.requirementId, "evidenceMapping.requirementId");
+    requireValue(mapping.domainRequirementId, "evidenceMapping.domainRequirementId");
     if (!Array.isArray(mapping.evidenceIds) || mapping.evidenceIds.some((id) => typeof id !== "string" || id.length === 0)) {
       throw new Error("evidenceMapping.evidenceIds must contain evidence IDs");
     }

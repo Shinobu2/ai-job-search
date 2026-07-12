@@ -6,8 +6,8 @@ function list(items: string[], empty: string): string {
   return items.length === 0 ? `- ${empty}` : items.map((item) => `- ${item}`).join("\n");
 }
 
-export function renderResultCard(result: EvaluationResult): string {
-  const display = result as DisplayResult;
+export function renderResultCard(result: DisplayResult): string {
+  const display = result;
   const strongMatches = result.mappings
     .filter((mapping) => ["proven", "partial", "transferable"].includes(mapping.status))
     .map((mapping) => `${mapping.requirementId} (${mapping.status}; evidence: ${mapping.evidenceIds.join(", ") || "none"})`);

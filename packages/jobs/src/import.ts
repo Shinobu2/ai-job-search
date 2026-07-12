@@ -105,7 +105,7 @@ function identity(text: string): Pick<ImportedJob, "title" | "company" | "locati
 async function sourceFrom(request: ImportRequest): Promise<SourceInput> {
   if ((request.text === undefined) === (request.file === undefined)) throw new Error("Provide exactly one of text or file");
   if (request.text !== undefined) {
-    return { rawContent: request.text, extractionText: request.text, rawHash: hash(request.text), sourceType: "pasted_text", sourceLocator: request.sourceId ? `source-id:${request.sourceId}` : undefined };
+    return { rawContent: request.text, extractionText: request.text, rawHash: hash(request.text), sourceType: request.sourceType ?? "pasted_text", sourceLocator: request.sourceId ? `source-id:${request.sourceId}` : undefined };
   }
 
   const file = resolve(request.file as string);

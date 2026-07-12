@@ -13,6 +13,7 @@ import { buildEvaluationInput, evaluateVacancy } from "../packages/jobs/src/eval
 import { importVacancy } from "../packages/jobs/src/import";
 import { renderResultCard } from "../packages/jobs/src/card";
 import { StorageRepository, type StoredJob } from "../packages/storage/src/repository";
+import { discoverFreehire, type FreehireSourceConfig } from "../packages/search/src/freehire";
 
 type JobFlags = { id?: string; file?: string; text?: string };
 
@@ -106,6 +107,28 @@ async function runJob(root: string, command: string | undefined, arguments_: str
   }
 }
 
+async function runSearch(root: string, sourceName: string | undefined, arguments_: string[]): Promise<void> {
+  if (sourceName !== "freehire" || arguments_.length > 0) throw new Error("Usage: search freehire");
+  const workspace = await loadWorkspace(root);
+  const sources = (workspace.search as { discovery?: { sources?: FreehireSourceConfig[] } }).discovery?.sources ?? [];
+  const source = sources.find((candidate) => candidate.id === "freehire");
+  if (!source) throw new Error("workspace/search.yml does not configure FreeHire");
+  const { db, repository } = openRepository(root);
+  try {
+    const results = await discoverFreehire(source, repository, workspace);
+    console.log(`FreeHire shortlist: ${results.length}`);
+    for (const result of results) {
+      console.log("");
+      console.log(renderResultCard({ ...result.evaluation, title: result.title, company: result.company }));
+      console.log(`Source: FreeHire ${result.sourceId} — ${result.sourceUrl}`);
+      console.log(`Import: ${result.reused ? "reused" : "created"}`);
+    }
+    console.log("No application was submitted.");
+  } finally {
+    db.close();
+  }
+}
+
 async function main(): Promise<void> {
   const [command, ...arguments_] = process.argv.slice(2);
   if (command === "setup") {
@@ -135,7 +158,11 @@ async function main(): Promise<void> {
     await runJob(process.cwd(), arguments_[0], arguments_.slice(1));
     return;
   }
-  throw new Error("Usage: bun run scripts/cli.ts <setup|doctor|capabilities|job>");
+  if (command === "search") {
+    await runSearch(process.cwd(), arguments_[0], arguments_.slice(1));
+    return;
+  }
+  throw new Error("Usage: bun run scripts/cli.ts <setup|doctor|capabilities|job|search>");
 }
 
 try {

@@ -332,14 +332,18 @@ test("is deterministic, makes blockers override fit, and keeps fit independent f
   expect(withCar.survival).not.toBe(withNoCar.survival);
 });
 
-test("builds a persistence graph with config provenance, requirement IDs, mapping hashes, gates, scores, tier, and recommendation", async () => {
+test("builds a persistence graph with config provenance, run-scoped requirement storage IDs, mapping hashes, gates, scores, tier, and recommendation", async () => {
   const text = await readFile(join(fixtureDirectory, "a-hardware-dct.md"), "utf8");
   const extracted = extractVacancy(text);
   const result = evaluateVacancy({ id: "persisted_job", title: "Data Center Hardware Technician", company: null, location: null }, extracted, workspace, "2026-07-12");
   const input = buildEvaluationInput(result, extracted, workspace);
   expect(input.evaluatorVersion).toContain("evaluation-v1");
   expect(input.provenance).toContainEqual(expect.objectContaining({ source_type: "system" }));
-  expect(input.requirements.map((requirement) => requirement.id)).toEqual(extracted.requirements.map((requirement) => requirement.id));
+  expect(input.requirements.map((requirement) => requirement.domain_id)).toEqual(extracted.requirements.map((requirement) => requirement.id));
+  expect(input.requirements.map((requirement) => requirement.id)).not.toEqual(extracted.requirements.map((requirement) => requirement.id));
+  expect(input.evidenceMappings.map((mapping) => mapping.domainId)).toEqual(result.mappings.map((mapping) => mapping.id));
+  expect(input.evidenceMappings.map((mapping) => mapping.domainRequirementId)).toEqual(result.mappings.map((mapping) => mapping.requirementId));
+  expect(input.evidenceMappings.map((mapping) => mapping.requirementId)).toEqual(input.requirements.map((requirement) => requirement.id));
   expect(input.evidenceMappings.every((mapping) => /^[a-f0-9]{64}$/.test(mapping.evidenceSnapshotHash))).toBe(true);
   expect(input.gateResults).toHaveLength(result.gates.length);
   expect(input.fitScores).toHaveLength(1);

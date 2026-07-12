@@ -1,1 +1,22 @@
 schema_version: 1
+discovery:
+  sources:
+    - id: freehire
+      enabled: true
+      mode: read_import_evaluate
+      country: DE
+      cities:
+        - Frankfurt
+        - Eschborn
+        - Offenbach
+        - Neu-Isenburg
+        - Langen
+        - Kelsterbach
+        - Darmstadt
+      keywords:
+        - data center technician
+        - rechenzentrumstechniker
+        - it systemelektroniker
+        - remote hands
+      max_pages: 1
+      page_size: 10

@@ -3,6 +3,7 @@ export type ImportRequest = {
   file?: string;
   sourceUrl?: string;
   sourceId?: string;
+  sourceType?: string;
 };
 
 export type ImportedJob = {
