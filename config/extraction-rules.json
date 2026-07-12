@@ -22,7 +22,8 @@
     { "id": "deadline", "label": "Deadline", "rule_id": "deadline.label" }
   ],
   "derived_fields": [
-    { "id": "night_work", "source": "shift", "pattern": "night", "value": "required", "rule_id": "night_work.shift_keyword" }
+    { "id": "night_work", "source": "shift", "pattern": "night", "value": "required", "rule_id": "night_work.shift_keyword" },
+    { "id": "shift", "source": "title", "pattern": "24\\s*/\\s*7|schichtdienst", "value": "rotating schedule; nights must be verified", "rule_id": "shift.title_rotation" }
   ],
   "requirements": [
     { "field": "skills", "type": "skill", "separator": ",", "rule_id": "skills.requirements" }

@@ -4,5 +4,5 @@
   "facilities_cues": ["facilities", "ups", "generator", "hvac", "electrical switching", "critical switching", "high-voltage"],
   "trainee_cues": ["trainee", "training", "junior programme"],
   "hardware_cues": ["data center", "datacenter", "hardware", "server", "cabling", "linux"],
-  "support_cues": ["support", "helpdesk", "help desk", "ticketing", "active directory", "user support"]
+  "support_cues": ["support", "helpdesk", "help desk", "service desk", "ticketing", "active directory", "user support", "it-systemelektroniker"]
 }

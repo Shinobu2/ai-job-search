@@ -44,6 +44,12 @@ test("classifies trainee, hardware, facilities, excluded facilities, and support
   expect((await evaluateFixture("f-it-support.md")).archetype).toBe("F");
 });
 
+test("classifies German service desk titles and does not assume 24/7 rotations are night-free", async () => {
+  const result = await evaluateText("# Service Desk Agent im 24/7 Schichtdienst (w/m/d)\nCompany: maincubes\nLocation: Frankfurt am Main");
+  expect(result.archetype).toBe("F");
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "shift", status: "BLOCKED" }));
+});
+
 test("blocks mandatory and rotating nights using the verified candidate constraint", async () => {
   const mandatory = await evaluateFixture("night-shift.md");
   const rotating = await evaluateFixture("dct-trainee.md");
