@@ -65,6 +65,22 @@ test("job commands import, evaluate, export, and reuse a local vacancy", async (
   }
 });
 
+test("job export preserves the persisted DCT trainee archetype and domain gate IDs", async () => {
+  const directory = await workspace();
+  try {
+    const imported = outputJson<{ id: string }>(await run(directory, "job", "import", "--file", join(directory, "fixtures", "dct-trainee.md")));
+    const evaluated = outputJson<{ archetype: string; gates: Array<{ id: string }> }>(await run(directory, "job", "evaluate", "--id", imported.id));
+    const exported = outputJson<{ archetype: string; gates: Array<{ id: string }> }>(await run(directory, "job", "export", "--id", imported.id));
+
+    expect(evaluated.archetype).toBe("AT");
+    expect(exported.archetype).toBe("AT");
+    expect(exported.gates.map((gate) => gate.id)).toEqual(evaluated.gates.map((gate) => gate.id));
+    expect(exported.gates.map((gate) => gate.id)).toEqual(["archetype", "shift", "transport", "physical", "scope", "facilities", "language", "experience", "salary", "deadline"]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("job check reports a domain blocker without treating it as a command failure", async () => {
   const directory = await workspace();
   try {

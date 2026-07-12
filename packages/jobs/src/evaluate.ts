@@ -225,7 +225,7 @@ export function buildEvaluationInput(result: EvaluationResult, extracted: Extrac
       mappingStatus: mapping.status,
       credit: mapping.credit,
     })),
-    gateResults: result.gates.map((item) => ({ ...item, id: derivedId("gate", `${result.fingerprint}:${item.id}`) })),
+    gateResults: result.gates.map((item) => ({ ...item, id: derivedId("gate", `${result.fingerprint}:${item.id}`), domain_id: item.id })),
     fitScores: [{ id: derivedId("fit", result.fingerprint), score: result.fit, mapping_credits: result.mappings.map((mapping) => ({ requirement_id: mapping.requirementId, credit: mapping.credit })) }],
     survivalScores: [{ id: derivedId("survival", result.fingerprint), score: result.survival }],
     applicationTiers: [{ id: derivedId("tier", result.fingerprint), tier: result.tier, confidence: result.confidence }],

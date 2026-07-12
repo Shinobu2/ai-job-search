@@ -117,15 +117,20 @@ export class StorageRepository {
 
     const rows = <T>(table: string): T[] => this.db.query(`SELECT payload_json FROM ${table} WHERE evaluation_run_id = ? ORDER BY rowid`).all(run.id)
       .map((row) => JSON.parse((row as { payload_json: string }).payload_json) as T);
-    const gates = rows<Omit<Gate, "id"> & { id: string }>("gate_results") as Gate[];
+    const gates = rows<Omit<Gate, "id"> & { id: string; domain_id?: string }>("gate_results")
+      .map(({ id: _storageId, domain_id, ...gate }) => {
+        if (typeof domain_id !== "string" || domain_id.length === 0) throw new Error(`Evaluation ${run.id} has a gate without a domain ID`);
+        return { ...gate, id: domain_id } as Gate;
+      });
     const mappings = rows<{ id: string; requirement_id: string; evidence_ids: string[]; mapping_status: EvidenceMapping["status"]; credit: number }>("evidence_mappings")
       .map((mapping) => ({ id: mapping.id, requirementId: mapping.requirement_id, evidenceIds: mapping.evidence_ids, status: mapping.mapping_status, credit: mapping.credit }));
     const fit = rows<{ score: number }>("fit_scores")[0]?.score;
     const survival = rows<{ score: number | null }>("survival_scores")[0]?.score;
     const tier = rows<{ tier: EvaluationResult["tier"]; confidence: EvaluationResult["confidence"] }>("application_tiers")[0];
     const recommendation = rows<{ verdict: string }>("recommendations")[0];
-    const archetype = /Classified as (A|AT|BT|F)/.exec(gates[0]?.reason ?? "")?.[1] as EvaluationResult["archetype"] | undefined;
-    if (fit === undefined || !tier || !recommendation || !archetype && !gates.some((gate) => gate.reason.includes("outside the supported archetypes"))) {
+    const archetypeGate = gates.find((gate) => gate.id === "archetype");
+    const archetype = /^Classified as (AT|BT|A|F)$/.exec(archetypeGate?.reason ?? "")?.[1] as EvaluationResult["archetype"] | undefined;
+    if (fit === undefined || !tier || !recommendation || (!archetype && archetypeGate?.status !== "BLOCKED")) {
       throw new Error(`Evaluation ${run.id} is incomplete`);
     }
     return {
