@@ -138,10 +138,10 @@ export async function importVacancy(request: ImportRequest, repository: StorageR
   const source = await sourceFrom(request);
   const canonicalUrl = request.sourceUrl ? normalizeUrl(request.sourceUrl) : undefined;
   const values = identity(source.extractionText);
-  const existing = (canonicalUrl ? repository.findJobByCanonicalUrl(canonicalUrl) : null)
-    ?? (request.sourceId ? repository.findJobBySourceId(request.sourceId) : null)
-    ?? (values.title && values.company && values.location ? repository.findJobByNormalizedTriple(values.title, values.company, values.location) : null)
-    ?? repository.findJobByRawHash(source.rawHash);
+  // Raw content is the immutable snapshot identity. A stable URL, vendor ID, or
+  // title/company/location triple may legitimately publish revised or parallel
+  // vacancies and must not silently return stale requirements.
+  const existing = repository.findJobByRawHash(source.rawHash);
   if (existing) return asImported(existing, source.rawHash, true);
 
   const sourceId = `source_${hash(`source:${source.rawHash}`)}`;

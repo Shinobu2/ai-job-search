@@ -125,37 +125,40 @@ test("rejects missing and unsupported local files clearly", async () => {
   }
 });
 
-test("reuses the matching job by canonical URL before other identities", async () => {
+test("creates an immutable new snapshot when canonical URL content changes", async () => {
   const fixture = await repository();
   try {
     const first = await importVacancy({ text: vacancy, sourceUrl: "HTTPS://Example.test/jobs/42/" }, fixture.repository);
     const second = await importVacancy({ text: "# Different title", sourceUrl: "https://example.test/jobs/42" }, fixture.repository);
-    expect(second).toMatchObject({ id: first.id, reused: true });
-    expect(fixture.db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 1 });
+    expect(second.reused).toBe(false);
+    expect(second.id).not.toBe(first.id);
+    expect(fixture.db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 2 });
   } finally {
     fixture.db.close();
     await rm(fixture.directory, { recursive: true, force: true });
   }
 });
 
-test("reuses the matching job by source ID before normalized fields", async () => {
+test("creates an immutable new snapshot when source ID content changes", async () => {
   const fixture = await repository();
   try {
     const first = await importVacancy({ text: vacancy, sourceId: "vendor-123" }, fixture.repository);
     const second = await importVacancy({ text: "# Different title", sourceId: "vendor-123" }, fixture.repository);
-    expect(second).toMatchObject({ id: first.id, reused: true });
+    expect(second.reused).toBe(false);
+    expect(second.id).not.toBe(first.id);
   } finally {
     fixture.db.close();
     await rm(fixture.directory, { recursive: true, force: true });
   }
 });
 
-test("reuses the matching job by normalized company, title, and location before hash", async () => {
+test("does not merge separate content solely by normalized company, title, and location", async () => {
   const fixture = await repository();
   try {
     const first = await importVacancy({ text: vacancy }, fixture.repository);
     const second = await importVacancy({ text: `${vacancy}\nSkills: Windows` }, fixture.repository);
-    expect(second).toMatchObject({ id: first.id, reused: true });
+    expect(second.reused).toBe(false);
+    expect(second.id).not.toBe(first.id);
   } finally {
     fixture.db.close();
     await rm(fixture.directory, { recursive: true, force: true });

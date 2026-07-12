@@ -37,7 +37,7 @@ export function classify(extracted: ExtractedJob): "A" | "AT" | "BT" | "F" | "X"
   if (includesAny(text, taxonomy.forced_x_cues)) return "X";
   const facilities = includesAny(text, taxonomy.facilities_cues);
   const trainee = includesAny(text, taxonomy.trainee_cues);
-  if (!facilities && trainee && includesAny(text, taxonomy.hardware_cues)) return "AT";
+  if (!facilities && trainee && (includesAny(text, taxonomy.hardware_cues) || includesAny(text, taxonomy.support_cues))) return "AT";
   if (facilities && trainee) return "BT";
   if (facilities) return "X";
   if (includesAny(text, taxonomy.hardware_cues)) return "A";

@@ -42,6 +42,8 @@ test("classifies trainee, hardware, facilities, excluded facilities, and support
   expect((await evaluateFixture("bt-facilities-trainee.md")).archetype).toBe("BT");
   expect((await evaluateFixture("unqualified-facilities.md")).archetype).toBe("X");
   expect((await evaluateFixture("f-it-support.md")).archetype).toBe("F");
+  const germanTrainee = extractVacancy("# Ausbildung IT-Systemelektroniker:in\nCompany: DB\nLocation: Frankfurt\nShift: day");
+  expect(evaluateVacancy({ id: "job_german_trainee", title: germanTrainee.fields.title.value, company: "DB", location: "Frankfurt" }, germanTrainee, workspace, "2026-07-12").archetype).toBe("AT");
 });
 
 test("classifies German service desk titles and does not assume 24/7 rotations are night-free", async () => {

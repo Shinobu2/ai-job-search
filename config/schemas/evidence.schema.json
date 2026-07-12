@@ -14,7 +14,7 @@
           "id": { "type": "string", "minLength": 1 },
           "kind": { "type": "string", "enum": ["hardware", "networking", "informal_assistance", "planned_project"] },
           "statement": { "type": "string", "minLength": 1 },
-          "reviewer_status": { "type": "string", "enum": ["unreviewed", "UNKNOWN"] },
+          "reviewer_status": { "type": "string", "enum": ["unreviewed", "user_confirmed", "document_verified", "UNKNOWN"] },
           "provenance": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/provenance" } }
         },
         "additionalProperties": false,
@@ -49,7 +49,7 @@
                 "kind": { "enum": ["hardware", "networking", "informal_assistance"] }
               }
             },
-            "then": { "properties": { "reviewer_status": { "const": "unreviewed" } } }
+            "then": { "properties": { "reviewer_status": { "enum": ["unreviewed", "user_confirmed", "document_verified"] } } }
           }
         ]
       }
