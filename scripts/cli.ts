@@ -17,6 +17,7 @@ import { discoverFreehire, type FreehireSourceConfig } from "../packages/search/
 import { discoverJobsuche, type JobsucheSourceConfig } from "../packages/search/src/jobsuche";
 import { loadEmployerRegistry } from "../packages/search/src/employer-registry";
 import { readPersonioEmployer } from "../packages/search/src/personio";
+import { generateDocumentPacket } from "../packages/documents/src/generate";
 
 type JobFlags = { id?: string; file?: string; text?: string };
 
@@ -165,6 +166,31 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
   }
 }
 
+async function runDocuments(root: string, command: string | undefined, arguments_: string[]): Promise<void> {
+  if (command !== "generate") throw new Error("Usage: documents generate --id <job-id>");
+  const flags = parseFlags(arguments_);
+  requireOnly(flags, ["id"], "documents generate");
+  if (!flags.id) throw new Error("documents generate requires --id");
+  const workspace = await loadWorkspace(root);
+  const { db, repository } = openRepository(root);
+  try {
+    const job = repository.readJob(flags.id);
+    const evaluation = repository.readEvaluation(flags.id);
+    if (!job || !evaluation) throw new Error(`Evaluated job is unavailable: ${flags.id}`);
+    const packet = generateDocumentPacket({ title: job.title ?? "Unknown role", company: job.company ?? "Unknown company", evaluation, workspace: workspace as never });
+    const directory = join(root, "workspace", "documents", flags.id);
+    await mkdir(directory, { recursive: true });
+    await Promise.all([
+      writeFile(join(directory, "cv-cover-en.md"), `${packet.english}\n`, "utf8"),
+      writeFile(join(directory, "lebenslauf-anschreiben-de.md"), `${packet.german}\n`, "utf8"),
+      writeFile(join(directory, "metadata.json"), `${JSON.stringify({ ready_for_submission: packet.ready_for_submission, missing: packet.missing }, null, 2)}\n`, "utf8"),
+    ]);
+    console.log(JSON.stringify({ job_id: flags.id, directory: join("workspace", "documents", flags.id).replace(/\\/g, "/"), ready_for_submission: packet.ready_for_submission, missing: packet.missing }, null, 2));
+  } finally {
+    db.close();
+  }
+}
+
 async function main(): Promise<void> {
   const [command, ...arguments_] = process.argv.slice(2);
   if (command === "setup") {
@@ -198,7 +224,11 @@ async function main(): Promise<void> {
     await runSearch(process.cwd(), arguments_[0], arguments_.slice(1));
     return;
   }
-  throw new Error("Usage: bun run scripts/cli.ts <setup|doctor|capabilities|job|search>");
+  if (command === "documents") {
+    await runDocuments(process.cwd(), arguments_[0], arguments_.slice(1));
+    return;
+  }
+  throw new Error("Usage: bun run scripts/cli.ts <setup|doctor|capabilities|job|search|documents>");
 }
 
 try {

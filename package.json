@@ -10,6 +10,7 @@
     "job:evaluate": "bun run scripts/cli.ts job evaluate",
     "job:export": "bun run scripts/cli.ts job export",
     "job:check": "bun run scripts/cli.ts job check",
+    "documents:generate": "bun run scripts/cli.ts documents generate",
     "search:freehire": "bun run scripts/cli.ts search freehire",
     "capabilities": "bun run scripts/cli.ts capabilities",
     "test": "bun test",

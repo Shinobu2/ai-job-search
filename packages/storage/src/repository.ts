@@ -119,17 +119,26 @@ export class StorageRepository {
 
     const rows = <T>(table: string): T[] => this.db.query(`SELECT payload_json FROM ${table} WHERE evaluation_run_id = ? ORDER BY rowid`).all(run.id)
       .map((row) => JSON.parse((row as { payload_json: string }).payload_json) as T);
+    const legacyGateId = (reason: string): string => {
+      if (/Classified as|supported archetypes/i.test(reason)) return "archetype";
+      if (/shift|night/i.test(reason)) return "shift";
+      if (/car/i.test(reason)) return "transport";
+      if (/heavy/i.test(reason)) return "physical";
+      if (/warehouse|conveyor/i.test(reason)) return "scope";
+      if (/electrical|HVAC|facilities/i.test(reason)) return "facilities";
+      if (/German|English|language/i.test(reason)) return "language";
+      if (/senior|experience/i.test(reason)) return "experience";
+      if (/salary|floor/i.test(reason)) return "salary";
+      if (/deadline|expired/i.test(reason)) return "deadline";
+      return "legacy_unknown";
+    };
     const gates = rows<Omit<Gate, "id"> & { id: string; domain_id?: string }>("gate_results")
       .map(({ id: _storageId, domain_id, ...gate }) => {
-        if (typeof domain_id !== "string" || domain_id.length === 0) throw new Error(`Evaluation ${run.id} has a gate without a domain ID`);
-        return { ...gate, id: domain_id } as Gate;
+        return { ...gate, id: typeof domain_id === "string" && domain_id.length > 0 ? domain_id : legacyGateId(gate.reason) } as Gate;
       });
     const mappings = rows<{ id: string; domain_id?: string; requirement_id: string; domain_requirement_id?: string; evidence_ids: string[]; mapping_status: EvidenceMapping["status"]; credit: number }>("evidence_mappings")
       .map((mapping) => {
-        if (typeof mapping.domain_id !== "string" || mapping.domain_id.length === 0 || typeof mapping.domain_requirement_id !== "string" || mapping.domain_requirement_id.length === 0) {
-          throw new Error(`Evaluation ${run.id} has a mapping without domain IDs`);
-        }
-        return { id: mapping.domain_id, requirementId: mapping.domain_requirement_id, evidenceIds: mapping.evidence_ids, status: mapping.mapping_status, credit: mapping.credit };
+        return { id: mapping.domain_id ?? mapping.id, requirementId: mapping.domain_requirement_id ?? mapping.requirement_id, evidenceIds: mapping.evidence_ids, status: mapping.mapping_status, credit: mapping.credit };
       });
     const fit = rows<{ score: number }>("fit_scores")[0]?.score;
     const survival = rows<{ score: number | null }>("survival_scores")[0]?.score;
