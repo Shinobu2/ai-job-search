@@ -1,4 +1,8 @@
 schema_version: 1
+identity:
+  name: { value: null, verification_status: unknown, provenance: [] }
+  email: { value: null, verification_status: unknown, provenance: [] }
+  phone: { value: null, verification_status: unknown, provenance: [] }
 targets:
   primary_archetypes:
     value: [DCT_A, DCT_AT]

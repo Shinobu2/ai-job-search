@@ -5,6 +5,16 @@
   "required": ["schema_version", "targets", "locations", "availability", "transport", "languages", "education", "legal", "constraints", "compensation"],
   "properties": {
     "schema_version": { "const": 1 },
+    "identity": {
+      "type": "object",
+      "required": ["name", "email", "phone"],
+      "properties": {
+        "name": { "$ref": "common.schema.json#/$defs/verifiedValue" },
+        "email": { "$ref": "common.schema.json#/$defs/verifiedValue" },
+        "phone": { "$ref": "common.schema.json#/$defs/verifiedValue" }
+      },
+      "additionalProperties": false
+    },
     "targets": {
       "type": "object",
       "required": ["primary_archetypes", "fallback_archetypes", "agencies_policy"],
