@@ -15,6 +15,8 @@ import { renderResultCard } from "../packages/jobs/src/card";
 import { StorageRepository, type StoredJob } from "../packages/storage/src/repository";
 import { discoverFreehire, type FreehireSourceConfig } from "../packages/search/src/freehire";
 import { discoverJobsuche, type JobsucheSourceConfig } from "../packages/search/src/jobsuche";
+import { loadEmployerRegistry } from "../packages/search/src/employer-registry";
+import { readPersonioEmployer } from "../packages/search/src/personio";
 
 type JobFlags = { id?: string; file?: string; text?: string };
 
@@ -109,7 +111,35 @@ async function runJob(root: string, command: string | undefined, arguments_: str
 }
 
 async function runSearch(root: string, sourceName: string | undefined, arguments_: string[]): Promise<void> {
-  if (!sourceName || arguments_.length > 0 || !["freehire", "jobsuche", "ba"].includes(sourceName)) throw new Error("Usage: search <freehire|jobsuche|ba>");
+  if (!sourceName || arguments_.length > 0 || !["freehire", "jobsuche", "ba", "employers"].includes(sourceName)) throw new Error("Usage: search <freehire|jobsuche|ba|employers>");
+  if (sourceName === "employers") {
+    const registry = await loadEmployerRegistry();
+    const { db, repository } = openRepository(root);
+    try {
+      let count = 0;
+      for (const employer of registry.employers.filter((entry) => entry.enabled && entry.policy === "public_ats_endpoint" && entry.ats === "personio")) {
+        for (const job of (await readPersonioEmployer(employer)).filter((entry) => !entry.location || employer.cities.some((city) => entry.location?.toLowerCase().includes(city.toLowerCase()))).slice(0, 25 - count)) {
+          const sourceUrl = new URL(`/job/${encodeURIComponent(job.id)}`, new URL(employer.career_url).origin).toString();
+          const imported = await importVacancy({
+            text: [`# ${job.title}`, `Company: ${employer.name}`, `Location: ${job.location ?? "unknown"}`, "Description:", job.description || "unknown"].join("\n"),
+            sourceId: `personio:${employer.id}:${job.id}`, sourceUrl, sourceType: "personio_public_xml",
+          }, repository);
+          const result = await evaluateJob(root, repository, imported.id);
+          console.log(renderResultCard(result));
+          console.log(`Source: Personio ${employer.id}:${job.id} — ${sourceUrl}`);
+          console.log(`Import: ${imported.reused ? "reused" : "created"}\n`);
+          count += 1;
+          if (count >= 25) break;
+        }
+        if (count >= 25) break;
+      }
+      console.log(`Employer shortlist: ${count}`);
+      console.log("No application was submitted.");
+      return;
+    } finally {
+      db.close();
+    }
+  }
   const workspace = await loadWorkspace(root);
   const sourceId = sourceName === "ba" ? "jobsuche" : sourceName;
   const sources = (workspace.search as { discovery?: { sources?: Array<FreehireSourceConfig | JobsucheSourceConfig> } }).discovery?.sources ?? [];
