@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { EvaluationResult, EvidenceMapping, Gate } from "../../jobs/src/types";
 
 export interface ProvenanceSnapshot {
   source_type: string;
@@ -48,6 +49,10 @@ export interface StoredJob {
   title: string | null;
   company: string | null;
   location: string | null;
+}
+
+export interface StoredJobSource extends StoredJob {
+  rawContent: string;
 }
 
 export interface EvidenceMappingInput {
@@ -100,6 +105,41 @@ export class StorageRepository {
 
   findJobByRawHash(rawHash: string): StoredJob | null {
     return this.db.query("SELECT j.id, j.title, j.company, j.location FROM jobs j JOIN job_sources s ON s.id = j.source_id WHERE s.raw_hash = ?").get(rawHash) as StoredJob | null;
+  }
+
+  readJob(jobId: string): StoredJobSource | null {
+    return this.db.query("SELECT j.id, j.title, j.company, j.location, s.raw_content AS rawContent FROM jobs j JOIN job_sources s ON s.id = j.source_id WHERE j.id = ?").get(jobId) as StoredJobSource | null;
+  }
+
+  readEvaluation(jobId: string): EvaluationResult | null {
+    const run = this.db.query("SELECT id, semantic_fingerprint FROM evaluation_runs WHERE job_id = ? ORDER BY created_at DESC, id DESC LIMIT 1").get(jobId) as { id: string; semantic_fingerprint: string } | null;
+    if (!run) return null;
+
+    const rows = <T>(table: string): T[] => this.db.query(`SELECT payload_json FROM ${table} WHERE evaluation_run_id = ? ORDER BY rowid`).all(run.id)
+      .map((row) => JSON.parse((row as { payload_json: string }).payload_json) as T);
+    const gates = rows<Omit<Gate, "id"> & { id: string }>("gate_results") as Gate[];
+    const mappings = rows<{ id: string; requirement_id: string; evidence_ids: string[]; mapping_status: EvidenceMapping["status"]; credit: number }>("evidence_mappings")
+      .map((mapping) => ({ id: mapping.id, requirementId: mapping.requirement_id, evidenceIds: mapping.evidence_ids, status: mapping.mapping_status, credit: mapping.credit }));
+    const fit = rows<{ score: number }>("fit_scores")[0]?.score;
+    const survival = rows<{ score: number | null }>("survival_scores")[0]?.score;
+    const tier = rows<{ tier: EvaluationResult["tier"]; confidence: EvaluationResult["confidence"] }>("application_tiers")[0];
+    const recommendation = rows<{ verdict: string }>("recommendations")[0];
+    const archetype = /Classified as (A|AT|BT|F)/.exec(gates[0]?.reason ?? "")?.[1] as EvaluationResult["archetype"] | undefined;
+    if (fit === undefined || !tier || !recommendation || !archetype && !gates.some((gate) => gate.reason.includes("outside the supported archetypes"))) {
+      throw new Error(`Evaluation ${run.id} is incomplete`);
+    }
+    return {
+      jobId,
+      archetype: archetype ?? "X",
+      gates,
+      mappings,
+      fit,
+      survival: survival ?? null,
+      confidence: tier.confidence,
+      tier: tier.tier,
+      verdict: recommendation.verdict,
+      fingerprint: run.semantic_fingerprint,
+    };
   }
 
   importJob(input: JobImportInput): { id: string; existing: boolean } {

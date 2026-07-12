@@ -9,6 +9,7 @@
     "job:import": "bun run scripts/cli.ts job import",
     "job:evaluate": "bun run scripts/cli.ts job evaluate",
     "job:export": "bun run scripts/cli.ts job export",
+    "job:check": "bun run scripts/cli.ts job check",
     "capabilities": "bun run scripts/cli.ts capabilities",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
