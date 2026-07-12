@@ -85,6 +85,24 @@ test("setup rerun preserves additional keys inside a user-owned map value", asyn
   }
 });
 
+test("setup adds newly shipped discovery sources without replacing configured sources", async () => {
+  const root = await copyExamplesToTemp();
+  try {
+    await setupWorkspace(root);
+    const searchPath = join(root, "workspace", "search.yml");
+    const search = await readYaml(searchPath);
+    search.discovery.sources = [search.discovery.sources[0]];
+    search.discovery.sources[0].cities = ["Darmstadt"];
+    await writeYaml(searchPath, search);
+    await setupWorkspace(root);
+    const rerun = await readYaml(searchPath);
+    expect(rerun.discovery.sources.map((source: { id: string }) => source.id)).toContain("jobsuche");
+    expect(rerun.discovery.sources.find((source: { id: string }) => source.id === "freehire").cities).toEqual(["Darmstadt"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("setup initializes the local SQLite schema without changing workspace facts", async () => {
   const root = await copyExamplesToTemp();
   try {

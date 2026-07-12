@@ -15,6 +15,16 @@ export interface SetupSummary {
 }
 
 function mergeDefaults(defaultValue: unknown, existingValue: unknown): unknown {
+  if (Array.isArray(existingValue) && Array.isArray(defaultValue)) {
+    if (existingValue.every(isRecord) && defaultValue.every(isRecord) && defaultValue.every((item) => typeof item.id === "string")) {
+      const existingById = new Map(existingValue.filter((item) => typeof item.id === "string").map((item) => [item.id as string, item]));
+      return [
+        ...defaultValue.map((item) => existingById.has(item.id as string) ? mergeDefaults(item, existingById.get(item.id as string)) : item),
+        ...existingValue.filter((item) => typeof item.id !== "string" || !defaultValue.some((candidate) => candidate.id === item.id)),
+      ];
+    }
+    return existingValue;
+  }
   if (Array.isArray(existingValue) || Array.isArray(defaultValue)) return existingValue;
   if (isRecord(defaultValue) && isRecord(existingValue)) {
     const merged = { ...existingValue };
