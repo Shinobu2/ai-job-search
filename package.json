@@ -11,6 +11,8 @@
     "job:export": "bun run scripts/cli.ts job export",
     "job:check": "bun run scripts/cli.ts job check",
     "documents:generate": "bun run scripts/cli.ts documents generate",
+    "applications": "bun run scripts/cli.ts applications",
+    "report:daily": "bun run scripts/cli.ts report daily",
     "search:freehire": "bun run scripts/cli.ts search freehire",
     "capabilities": "bun run scripts/cli.ts capabilities",
     "test": "bun test",

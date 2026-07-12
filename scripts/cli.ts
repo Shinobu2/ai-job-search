@@ -12,14 +12,14 @@ import { extractVacancy } from "../packages/jobs/src/extract";
 import { buildEvaluationInput, evaluateVacancy } from "../packages/jobs/src/evaluate";
 import { importVacancy } from "../packages/jobs/src/import";
 import { renderResultCard } from "../packages/jobs/src/card";
-import { StorageRepository, type StoredJob } from "../packages/storage/src/repository";
+import { StorageRepository, type ApplicationStatus, type StoredJob } from "../packages/storage/src/repository";
 import { discoverFreehire, type FreehireSourceConfig } from "../packages/search/src/freehire";
 import { discoverJobsuche, type JobsucheSourceConfig } from "../packages/search/src/jobsuche";
 import { loadEmployerRegistry } from "../packages/search/src/employer-registry";
 import { readPersonioEmployer } from "../packages/search/src/personio";
 import { generateDocumentPacket } from "../packages/documents/src/generate";
 
-type JobFlags = { id?: string; file?: string; text?: string };
+type JobFlags = { id?: string; file?: string; text?: string; status?: string; next?: string; note?: string };
 
 function parseFlags(arguments_: string[]): JobFlags {
   const flags: JobFlags = {};
@@ -27,7 +27,7 @@ function parseFlags(arguments_: string[]): JobFlags {
     const flag = arguments_[index];
     if (!flag?.startsWith("--")) throw new Error(`Unknown argument: ${flag ?? ""}`);
     const key = flag.slice(2) as keyof JobFlags;
-    if (!(key in { id: true, file: true, text: true })) throw new Error(`Unknown flag: ${flag}`);
+    if (!(key in { id: true, file: true, text: true, status: true, next: true, note: true })) throw new Error(`Unknown flag: ${flag}`);
     const value = arguments_[index + 1];
     if (!value || value.startsWith("--")) throw new Error(`${flag} requires a value`);
     if (flags[key] !== undefined) throw new Error(`${flag} may only be provided once`);
@@ -191,6 +191,46 @@ async function runDocuments(root: string, command: string | undefined, arguments
   }
 }
 
+async function runApplications(root: string, command: string | undefined, arguments_: string[]): Promise<void> {
+  const flags = parseFlags(arguments_);
+  const { db, repository } = openRepository(root);
+  try {
+    if (command === "list") {
+      if (arguments_.length) throw new Error("applications list takes no flags");
+      console.log(JSON.stringify(repository.listApplications(), null, 2));
+      return;
+    }
+    if (command === "set") {
+      requireOnly(flags, ["id", "status", "next", "note"], "applications set");
+      const statuses = ["shortlisted", "ready_for_review", "user_submitted", "interview", "offer", "rejected", "withdrawn"] as const;
+      if (!flags.id || !flags.status || !statuses.includes(flags.status as ApplicationStatus)) throw new Error(`applications set requires --id and --status (${statuses.join("|")})`);
+      console.log(JSON.stringify(repository.setApplicationStatus(flags.id, flags.status as ApplicationStatus, { nextAction: flags.next, note: flags.note, actor: "user" }), null, 2));
+      return;
+    }
+    throw new Error("Usage: applications <set|list>");
+  } finally { db.close(); }
+}
+
+async function runReport(root: string, command: string | undefined): Promise<void> {
+  if (command !== "daily") throw new Error("Usage: report daily");
+  const { db, repository } = openRepository(root);
+  try {
+    const applications = repository.listApplications();
+    const evaluated = repository.listEvaluatedJobIds(50).flatMap((id) => {
+      const job = repository.readJob(id); const evaluation = repository.readEvaluation(id);
+      return job && evaluation ? [{ id, job, evaluation }] : [];
+    });
+    const top = evaluated.filter(({ evaluation }) => evaluation.verdict !== "BLOCKED" && evaluation.tier !== "C").sort((a, b) => b.evaluation.fit - a.evaluation.fit).slice(0, 5);
+    console.log(`# Daily job-search report — ${new Date().toISOString().slice(0, 10)}\n`);
+    console.log(`Evaluated: ${evaluated.length} | Tracked applications: ${applications.length} | Actionable shortlist: ${top.length}\n`);
+    console.log("## Best matches");
+    console.log(top.length ? top.map(({ id, job, evaluation }) => `- ${job.title ?? "Unknown role"} — ${job.company ?? "Unknown company"}: ${evaluation.tier}, fit ${evaluation.fit}, ${evaluation.verdict} [${id}]`).join("\n") : "- No non-blocked matches yet.");
+    console.log("\n## Next actions");
+    const actions = applications.filter((item) => item.next_action).slice(0, 3).map((item) => `- ${item.next_action} [${item.job_id}]`);
+    console.log(actions.length ? actions.join("\n") : "- Review the top shortlist and verify shift, salary, and workplace details.");
+  } finally { db.close(); }
+}
+
 async function main(): Promise<void> {
   const [command, ...arguments_] = process.argv.slice(2);
   if (command === "setup") {
@@ -228,7 +268,13 @@ async function main(): Promise<void> {
     await runDocuments(process.cwd(), arguments_[0], arguments_.slice(1));
     return;
   }
-  throw new Error("Usage: bun run scripts/cli.ts <setup|doctor|capabilities|job|search|documents>");
+  if (command === "applications") {
+    await runApplications(process.cwd(), arguments_[0], arguments_.slice(1)); return;
+  }
+  if (command === "report") {
+    await runReport(process.cwd(), arguments_[0]); return;
+  }
+  throw new Error("Usage: bun run scripts/cli.ts <setup|doctor|capabilities|job|search|documents|applications|report>");
 }
 
 try {

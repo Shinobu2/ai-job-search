@@ -67,6 +67,9 @@ export interface EvidenceMappingInput {
   credit?: number;
 }
 
+export type ApplicationStatus = "shortlisted" | "ready_for_review" | "user_submitted" | "interview" | "offer" | "rejected" | "withdrawn";
+export type ApplicationRecord = { job_id: string; status: ApplicationStatus; next_action: string | null; document_dir: string | null; created_at: string; updated_at: string };
+
 const hashPattern = /^[a-f0-9]{64}$/;
 
 function isProvenance(value: unknown): value is ProvenanceSnapshot[] {
@@ -238,6 +241,27 @@ export class StorageRepository {
       };
       query.run(row.id, input.id, row.requirementId, JSON.stringify(row.evidenceIds), row.evidenceSnapshotHash, JSON.stringify(payload), createdAt, input.evaluatorVersion, JSON.stringify(row.provenance));
     }
+  }
+
+  setApplicationStatus(jobId: string, status: ApplicationStatus, options: { nextAction?: string; documentDir?: string; actor?: string; note?: string } = {}): ApplicationRecord {
+    if (!this.readJob(jobId)) throw new Error(`Unknown job ID: ${jobId}`);
+    const timestamp = now();
+    const write = this.db.transaction(() => {
+      this.db.query(`INSERT INTO applications (job_id, status, next_action, document_dir, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(job_id) DO UPDATE SET status=excluded.status, next_action=COALESCE(excluded.next_action, applications.next_action), document_dir=COALESCE(excluded.document_dir, applications.document_dir), updated_at=excluded.updated_at`)
+        .run(jobId, status, options.nextAction ?? null, options.documentDir ?? null, timestamp, timestamp);
+      this.db.query("INSERT INTO application_events (job_id, status, actor, note, created_at) VALUES (?, ?, ?, ?, ?)").run(jobId, status, options.actor ?? "user", options.note ?? null, timestamp);
+    });
+    write.immediate();
+    return this.db.query("SELECT * FROM applications WHERE job_id = ?").get(jobId) as ApplicationRecord;
+  }
+
+  listApplications(): ApplicationRecord[] {
+    return this.db.query("SELECT * FROM applications ORDER BY updated_at DESC, job_id").all() as ApplicationRecord[];
+  }
+
+  listEvaluatedJobIds(limit = 20): string[] {
+    return (this.db.query("SELECT job_id FROM evaluation_runs GROUP BY job_id ORDER BY MAX(created_at) DESC LIMIT ?").all(limit) as Array<{ job_id: string }>).map((row) => row.job_id);
   }
 
   private validateMapping(mapping: EvidenceMappingInput): void {
