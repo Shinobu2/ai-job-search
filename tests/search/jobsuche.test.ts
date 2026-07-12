@@ -33,16 +33,16 @@ test("Jobsuche reads bounded official search and details, then preserves refnr, 
     const url = String(input);
     requested.push({ url, headers: new Headers(init?.headers), redirect: init?.redirect });
     if (url.includes("/pc/v6/jobs?")) {
-      return response({ stellenangebote: [{
-        referenznummer: "10001-1002716922-S", beruf: "Data Center Technician", arbeitgeber: "Fixture DC",
-        arbeitsort: { ort: "Frankfurt", land: "Deutschland" }, externeUrl: "https://jobs.example/dct",
+      return response({ ergebnisliste: [{
+        referenznummer: "10001-1002716922-S", stellenangebotsTitel: "Data Center Technician", firma: "Fixture DC",
+        stellenlokationen: [{ adresse: { ort: "Frankfurt", land: "Deutschland" } }], externeUrl: "https://jobs.example/dct",
       }] });
     }
     if (url.endsWith("/MTAwMDEtMTAwMjcxNjkyMi1T")) {
       return response({
         referenznummer: "10001-1002716922-S", stellenangebotsTitel: "Data Center Technician",
-        arbeitgeber: "Fixture DC", arbeitsorte: [{ ort: "Frankfurt", land: "Deutschland" }],
-        stellenangebotsBeschreibung: "Skills: hardware replacement\nShift: day",
+        firma: "Fixture DC", stellenlokationen: [{ adresse: { ort: "Frankfurt", land: "Deutschland" } }],
+        stellenangebotsBeschreibung: "Skills: hardware replacement\nMust work night shifts and perform physically demanding work over extended periods.",
       });
     }
     return new Response("not found", { status: 404 });
@@ -62,6 +62,9 @@ test("Jobsuche reads bounded official search and details, then preserves refnr, 
     expect(stored).toMatchObject({ source_locator: "source-id:jobsuche:10001-1002716922-S", supplied_url: "https://jobs.example/dct" });
     expect(stored.raw_content).toContain("10001-1002716922-S");
     expect(stored.raw_content).toContain("hardware replacement");
+    expect(stored.raw_content).toContain("Shift: night or rotating shifts required");
+    expect(stored.raw_content).toContain("Skills: PC hardware, hardware troubleshooting");
+    expect(first[0]?.evaluation.gates).toContainEqual(expect.objectContaining({ id: "shift", status: "VERIFY" }));
   } finally {
     globalThis.fetch = originalFetch;
     db.close();

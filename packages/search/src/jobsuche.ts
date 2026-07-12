@@ -24,6 +24,10 @@ type JobsucheSearchJob = {
   arbeitgeber?: string;
   arbeitsort?: JobsucheLocation;
   externeUrl?: string;
+  stellenangebotsTitel?: string;
+  hauptberuf?: string;
+  firma?: string;
+  stellenlokationen?: Array<{ adresse?: JobsucheLocation }>;
 };
 
 type JobsucheLocation = { ort?: string; region?: string; land?: string };
@@ -41,9 +45,14 @@ type JobsucheDetail = {
   ersteVeroeffentlichungsdatum?: string;
   arbeitszeitmodelle?: string[];
   befristung?: string;
+  firma?: string;
+  stellenlokationen?: Array<{ adresse?: JobsucheLocation }>;
+  veroeffentlichungszeitraum?: { von?: string };
+  datumErsteVeroeffentlichung?: string;
+  arbeitszeitSchichtNachtWochenende?: boolean;
 };
 
-type JobsucheSearchResponse = { stellenangebote?: JobsucheSearchJob[] };
+type JobsucheSearchResponse = { stellenangebote?: JobsucheSearchJob[]; ergebnisliste?: JobsucheSearchJob[] };
 
 const JOBSUCHE_BASE_URL = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service";
 const JOBSUCHE_API_KEY = "jobboerse-jobsuche";
@@ -90,17 +99,39 @@ function locationText(locations: JobsucheLocation[] | undefined, fallback?: Jobs
   return [location.ort, location.region, location.land].filter((value, index, values) => value && values.indexOf(value) === index).join(", ") || null;
 }
 
+function realLocations(rows: Array<{ adresse?: JobsucheLocation }> | undefined): JobsucheLocation[] | undefined {
+  return rows?.flatMap((row) => row.adresse ? [row.adresse] : []);
+}
+
+function skillsFromDescription(description: string): string[] {
+  const rules: Array<[RegExp, string]> = [
+    [/\b(?:pc |computer\/)?hardware\b|komponenten/i, "PC hardware"],
+    [/\bservers?\b|serverhardware/i, "server hardware"],
+    [/network|netzwerk|routers?|switches?/i, "networking"],
+    [/cabling|verkabelung|kabelmanagement/i, "cabling"],
+    [/troubleshoot|hardware replacement|repair|fehlersuche|reparatur|instandhaltung/i, "hardware troubleshooting"],
+    [/\blinux\b/i, "Linux"],
+  ];
+  return rules.flatMap(([pattern, skill]) => pattern.test(description) ? [skill] : []);
+}
+
 function canonicalText(detail: JobsucheDetail, summary: JobsucheSearchJob, refnr: string): string {
-  const title = detail.stellenangebotsTitel ?? detail.titel ?? summary.beruf ?? "(untitled)";
-  const company = detail.arbeitgeber ?? summary.arbeitgeber ?? "unknown";
-  const location = locationText(detail.arbeitsorte, summary.arbeitsort) ?? "unknown";
+  const title = detail.stellenangebotsTitel ?? detail.titel ?? summary.stellenangebotsTitel ?? summary.beruf ?? summary.hauptberuf ?? "(untitled)";
+  const company = detail.arbeitgeber ?? detail.firma ?? summary.arbeitgeber ?? summary.firma ?? "unknown";
+  const location = locationText(detail.arbeitsorte ?? realLocations(detail.stellenlokationen), summary.arbeitsort ?? realLocations(summary.stellenlokationen)?.[0]) ?? "unknown";
   const description = detail.stellenangebotsBeschreibung ?? detail.stellenbeschreibung ?? "unknown";
+  const shift = /night shifts?|nachtschicht|schichtdienst/i.test(description) || detail.arbeitszeitSchichtNachtWochenende === true ? "night or rotating shifts required" : "unknown";
+  const physical = /physically demanding[\s\S]{0,120}extended periods|extended periods[\s\S]{0,120}physical|continuous heavy/i.test(description) ? "continuous heavy work required" : "unknown";
+  const skills = skillsFromDescription(description);
   return [
     `# ${title}`,
     `Company: ${company}`,
     `Location: ${location}`,
     `Jobsuche reference number: ${refnr}`,
-    `Posted: ${detail.aktuelleVeroeffentlichungsdatum ?? detail.ersteVeroeffentlichungsdatum ?? "unknown"}`,
+    `Posted: ${detail.aktuelleVeroeffentlichungsdatum ?? detail.ersteVeroeffentlichungsdatum ?? detail.veroeffentlichungszeitraum?.von ?? detail.datumErsteVeroeffentlichung ?? "unknown"}`,
+    `Shift: ${shift}`,
+    `Physical: ${physical}`,
+    `Skills: ${skills.join(", ") || "unknown"}`,
     `Working time: ${detail.arbeitszeitmodelle?.join(", ") || "unknown"}`,
     `Contract: ${detail.befristung ?? "unknown"}`,
     "Description:",
@@ -132,7 +163,7 @@ export async function discoverJobsuche(
     for (const city of source.cities) {
       for (let page = 1; page <= source.max_pages; page += 1) {
         const result = await getJson<JobsucheSearchResponse>(searchUrl(keyword, city, page, source.page_size));
-        const listings = result.stellenangebote ?? [];
+        const listings = result.ergebnisliste ?? result.stellenangebote ?? [];
         for (const job of listings) {
           const refnr = referenceNumber(job);
           if (refnr && !seen.has(refnr) && seen.size < MAX_DISCOVERY_RESULTS) seen.set(refnr, job);
@@ -147,7 +178,7 @@ export async function discoverJobsuche(
   const rows: DiscoveredJob[] = [];
   for (const [refnr, summary] of seen) {
     const detail = await getJson<JobsucheDetail>(detailUrl(refnr));
-    const title = detail.stellenangebotsTitel ?? detail.titel ?? summary.beruf;
+    const title = detail.stellenangebotsTitel ?? detail.titel ?? summary.stellenangebotsTitel ?? summary.beruf ?? summary.hauptberuf;
     if (!title) throw new Error("Jobsuche detail is missing a title");
     const sourceUrl = summary.externeUrl ?? portalUrl(refnr);
     const sourceId = `jobsuche:${refnr}`;
@@ -161,8 +192,8 @@ export async function discoverJobsuche(
     repository.persistEvaluation(buildEvaluationInput(evaluation, extracted, workspace));
     rows.push({
       id: imported.id, reused: imported.reused, sourceId, sourceUrl, title,
-      company: detail.arbeitgeber ?? summary.arbeitgeber ?? null,
-      location: locationText(detail.arbeitsorte, summary.arbeitsort), evaluation,
+      company: detail.arbeitgeber ?? detail.firma ?? summary.arbeitgeber ?? summary.firma ?? null,
+      location: locationText(detail.arbeitsorte ?? realLocations(detail.stellenlokationen), summary.arbeitsort ?? realLocations(summary.stellenlokationen)?.[0]), evaluation,
     });
   }
   return sortResults(rows);

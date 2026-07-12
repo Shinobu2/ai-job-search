@@ -83,7 +83,8 @@ function gatesFor(archetype: EvaluationResult["archetype"], extracted: Extracted
     shift: !shift || placeholder(shift) ? gate("shift", "VERIFY", true, "Shift requirements are unknown")
       : includes(shift, /night|rotating/i) && verified(profile.constraints?.night_shifts) && profile.constraints?.night_shifts.value === "blocked"
         ? gate("shift", "BLOCKED", true, "Posting requires night or rotating shifts", ["profile.constraints.night_shifts"])
-        : includes(shift, /night|rotating/i) ? gate("shift", "PASS_WITH_RISK", true, "Night or rotating shifts need confirmation")
+        : includes(shift, /night|rotating/i) && !verified(profile.constraints?.night_shifts) ? gate("shift", "VERIFY", true, "Night or rotating shifts conflict status is unknown")
+          : includes(shift, /night|rotating/i) ? gate("shift", "PASS_WITH_RISK", true, "Night or rotating shifts need confirmation")
           : gate("shift", "PASS", true, "No night or rotating shift requirement"),
     transport: includes(car, /own car required/i) && verified(profile.transport?.has_car) && profile.transport?.has_car.value === false
       ? gate("transport", "BLOCKED", true, "Own car is required but verified unavailable", ["profile.transport.has_car"])

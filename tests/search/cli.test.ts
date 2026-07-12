@@ -31,12 +31,14 @@ test("search freehire imports, evaluates, and prints a local shortlist without s
   const directory = await mkdtemp(join(tmpdir(), "career-control-room-search-cli-"));
   await cp(join(root, "workspace.example"), join(directory, "workspace"), { recursive: true });
   const job = { public_slug: "fixture-dct", title: "Data Center Technician", company: "Fixture DC", location: "Frankfurt, Germany", url: "https://jobs.example/fixture-dct", description: "Skills: hardware replacement", skills: ["Hardware"], regions: ["eu"], countries: ["DE"], cities: ["Frankfurt"], posted_at: "2026-07-12", created_at: "2026-07-12", enrichment: {} };
+  const excluded = { ...job, public_slug: "fixture-warehouse", title: "Warehouse Operative", url: "https://jobs.example/fixture-warehouse", description: "Warehouse conveyor work", skills: [] };
   const server = Bun.serve({
     port: 0,
     fetch(request) {
       const path = new URL(request.url).pathname;
-      if (path.endsWith("/search")) return payload([job]);
+      if (path.endsWith("/search")) return payload([job, excluded]);
       if (path.endsWith("/fixture-dct")) return payload(job);
+      if (path.endsWith("/fixture-warehouse")) return payload(excluded);
       return new Response("not found", { status: 404 });
     },
   });
@@ -49,8 +51,9 @@ test("search freehire imports, evaluates, and prints a local shortlist without s
     expect(await child.exited).toBe(0);
     expect(await new Response(child.stderr).text()).toBe("");
     const stdout = await new Response(child.stdout).text();
-    expect(stdout).toContain("FreeHire shortlist: 1");
+    expect(stdout).toContain("FreeHire discovered: 2 | actionable shortlist: 1");
     expect(stdout).toContain("Data Center Technician");
+    expect(stdout).not.toContain("Warehouse Operative");
     expect(stdout).toContain("No application was submitted.");
   } finally {
     server.stop(true);
@@ -81,7 +84,7 @@ test("search jobsuche imports, evaluates, and prints a local shortlist without s
     expect(await child.exited).toBe(0);
     expect(await new Response(child.stderr).text()).toBe("");
     const stdout = await new Response(child.stdout).text();
-    expect(stdout).toContain("Jobsuche shortlist: 1");
+    expect(stdout).toContain("Jobsuche discovered: 1 | actionable shortlist: 1 | showing: 1");
     expect(stdout).toContain("Data Center Technician");
     expect(stdout).toContain("No application was submitted.");
   } finally {

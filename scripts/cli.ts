@@ -153,8 +153,11 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
       ? await discoverJobsuche(source, repository, workspace)
       : await discoverFreehire(source, repository, workspace);
     const sourceLabel = jobsuche ? "Jobsuche" : "FreeHire";
-    console.log(`${sourceLabel} shortlist: ${results.length}`);
-    for (const result of results) {
+    const actionable = results.filter((result) => result.evaluation.archetype !== "X"
+      && !result.evaluation.gates.some((gate) => gate.status === "BLOCKED"));
+    const displayed = actionable.slice(0, 10);
+    console.log(`${sourceLabel} discovered: ${results.length} | actionable shortlist: ${actionable.length} | showing: ${displayed.length}`);
+    for (const result of displayed) {
       console.log("");
       console.log(renderResultCard({ ...result.evaluation, title: result.title, company: result.company }));
       console.log(`Source: ${sourceLabel} ${result.sourceId} — ${result.sourceUrl}`);
