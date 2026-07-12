@@ -69,6 +69,7 @@ export interface EvidenceMappingInput {
 
 export type ApplicationStatus = "shortlisted" | "ready_for_review" | "user_submitted" | "interview" | "offer" | "rejected" | "withdrawn";
 export type ApplicationRecord = { job_id: string; status: ApplicationStatus; next_action: string | null; document_dir: string | null; created_at: string; updated_at: string };
+export type DailyActivity = { imported: number; evaluated: number; application_events: number; statuses: Record<string, number> };
 
 const hashPattern = /^[a-f0-9]{64}$/;
 
@@ -262,6 +263,13 @@ export class StorageRepository {
 
   listEvaluatedJobIds(limit = 20): string[] {
     return (this.db.query("SELECT job_id FROM evaluation_runs GROUP BY job_id ORDER BY MAX(created_at) DESC LIMIT ?").all(limit) as Array<{ job_id: string }>).map((row) => row.job_id);
+  }
+
+  dailyActivity(isoDate: string): DailyActivity {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) throw new Error("daily activity date must be YYYY-MM-DD");
+    const count = (table: string, column: string) => (this.db.query(`SELECT COUNT(*) AS count FROM ${table} WHERE substr(${column}, 1, 10) = ?`).get(isoDate) as { count: number }).count;
+    const statuses = Object.fromEntries((this.db.query("SELECT status, COUNT(*) AS count FROM applications GROUP BY status ORDER BY status").all() as Array<{ status: string; count: number }>).map((row) => [row.status, row.count]));
+    return { imported: count("job_sources", "imported_at"), evaluated: count("evaluation_runs", "created_at"), application_events: count("application_events", "created_at"), statuses };
   }
 
   private validateMapping(mapping: EvidenceMappingInput): void {

@@ -14,6 +14,8 @@
     "applications": "bun run scripts/cli.ts applications",
     "report:daily": "bun run scripts/cli.ts report daily",
     "search:freehire": "bun run scripts/cli.ts search freehire",
+    "search:ba": "bun run scripts/cli.ts search ba",
+    "search:employers": "bun run scripts/cli.ts search employers",
     "capabilities": "bun run scripts/cli.ts capabilities",
     "test": "bun test",
     "typecheck": "tsc --noEmit"

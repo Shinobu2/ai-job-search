@@ -66,6 +66,7 @@ async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url, {
     headers: { Accept: "application/json", "X-API-Key": JOBSUCHE_API_KEY },
     redirect: "error",
+    signal: AbortSignal.timeout(15_000),
   });
   if (!response.ok) throw new Error(`Jobsuche read failed: ${response.status} ${response.statusText}`);
   try {
@@ -177,9 +178,11 @@ export async function discoverJobsuche(
 
   const rows: DiscoveredJob[] = [];
   for (const [refnr, summary] of seen) {
-    const detail = await getJson<JobsucheDetail>(detailUrl(refnr));
+    let detail: JobsucheDetail;
+    try { detail = await getJson<JobsucheDetail>(detailUrl(refnr)); }
+    catch { continue; }
     const title = detail.stellenangebotsTitel ?? detail.titel ?? summary.stellenangebotsTitel ?? summary.beruf ?? summary.hauptberuf;
-    if (!title) throw new Error("Jobsuche detail is missing a title");
+    if (!title) continue;
     const sourceUrl = summary.externeUrl ?? portalUrl(refnr);
     const sourceId = `jobsuche:${refnr}`;
     const imported = await importVacancy({

@@ -54,7 +54,7 @@ function isoToday(): string {
 }
 
 async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url, { headers: { Accept: "application/json" }, redirect: "error" });
+  const response = await fetch(url, { headers: { Accept: "application/json" }, redirect: "error", signal: AbortSignal.timeout(15_000) });
   if (!response.ok) throw new Error(`FreeHire read failed: ${response.status} ${response.statusText}`);
   try {
     return await response.json() as T;
@@ -114,9 +114,11 @@ export async function discoverFreehire(
 
   const rows: DiscoveredJob[] = [];
   for (const summary of seen.values()) {
-    const detailEnvelope = await getJson<Envelope<FreehireJob>>(`${FREEHIRE_BASE_URL}/api/v1/jobs/${encodeURIComponent(summary.public_slug)}`);
+    let detailEnvelope: Envelope<FreehireJob>;
+    try { detailEnvelope = await getJson<Envelope<FreehireJob>>(`${FREEHIRE_BASE_URL}/api/v1/jobs/${encodeURIComponent(summary.public_slug)}`); }
+    catch { continue; }
     const detail = detailEnvelope.data;
-    if (!detail?.public_slug || !detail.url) throw new Error("FreeHire detail is missing public identity");
+    if (!detail?.public_slug || !detail.url) continue;
     const sourceId = `freehire:${detail.public_slug}`;
     const imported = await importVacancy({
       text: canonicalText(detail), sourceUrl: detail.url, sourceId, sourceType: "freehire_public_api",

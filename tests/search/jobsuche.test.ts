@@ -33,7 +33,7 @@ test("Jobsuche reads bounded official search and details, then preserves refnr, 
     const url = String(input);
     requested.push({ url, headers: new Headers(init?.headers), redirect: init?.redirect });
     if (url.includes("/pc/v6/jobs?")) {
-      return response({ ergebnisliste: [{
+      return response({ ergebnisliste: [{ referenznummer: "expired-ref", stellenangebotsTitel: "Expired listing" }, {
         referenznummer: "10001-1002716922-S", stellenangebotsTitel: "Data Center Technician", firma: "Fixture DC",
         stellenlokationen: [{ adresse: { ort: "Frankfurt", land: "Deutschland" } }], externeUrl: "https://jobs.example/dct",
       }] });
@@ -52,7 +52,7 @@ test("Jobsuche reads bounded official search and details, then preserves refnr, 
     const first = await discoverJobsuche(source, repository, workspace as never, { asOf: "2026-07-12" });
     const second = await discoverJobsuche(source, repository, workspace as never, { asOf: "2026-07-12" });
 
-    expect(requested).toHaveLength(4);
+    expect(requested).toHaveLength(6);
     expect(requested.filter((request) => request.url.includes("/pc/v6/jobs?")).every((request) => request.url.includes("was=data+center+technician") && request.url.includes("wo=Frankfurt") && request.url.includes("page=1") && request.url.includes("size=5"))).toBe(true);
     expect(requested.every((request) => request.headers.get("X-API-Key") === "jobboerse-jobsuche" && request.redirect === "error")).toBe(true);
     expect(first).toHaveLength(1);
@@ -65,6 +65,7 @@ test("Jobsuche reads bounded official search and details, then preserves refnr, 
     expect(stored.raw_content).toContain("Shift: night or rotating shifts required");
     expect(stored.raw_content).toContain("Skills: PC hardware, hardware troubleshooting");
     expect(first[0]?.evaluation.gates).toContainEqual(expect.objectContaining({ id: "shift", status: "VERIFY" }));
+    expect(requested.some((entry) => entry.url.includes(encodeURIComponent(Buffer.from("expired-ref").toString("base64"))))).toBe(true);
   } finally {
     globalThis.fetch = originalFetch;
     db.close();

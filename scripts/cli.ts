@@ -19,7 +19,7 @@ import { loadEmployerRegistry } from "../packages/search/src/employer-registry";
 import { readPersonioEmployer } from "../packages/search/src/personio";
 import { generateDocumentPacket } from "../packages/documents/src/generate";
 
-type JobFlags = { id?: string; file?: string; text?: string; status?: string; next?: string; note?: string };
+type JobFlags = { id?: string; file?: string; text?: string; status?: string; next?: string; note?: string; confirm?: string };
 
 function parseFlags(arguments_: string[]): JobFlags {
   const flags: JobFlags = {};
@@ -27,7 +27,7 @@ function parseFlags(arguments_: string[]): JobFlags {
     const flag = arguments_[index];
     if (!flag?.startsWith("--")) throw new Error(`Unknown argument: ${flag ?? ""}`);
     const key = flag.slice(2) as keyof JobFlags;
-    if (!(key in { id: true, file: true, text: true, status: true, next: true, note: true })) throw new Error(`Unknown flag: ${flag}`);
+    if (!(key in { id: true, file: true, text: true, status: true, next: true, note: true, confirm: true })) throw new Error(`Unknown flag: ${flag}`);
     const value = arguments_[index + 1];
     if (!value || value.startsWith("--")) throw new Error(`${flag} requires a value`);
     if (flags[key] !== undefined) throw new Error(`${flag} may only be provided once`);
@@ -204,10 +204,27 @@ async function runApplications(root: string, command: string | undefined, argume
       return;
     }
     if (command === "set") {
-      requireOnly(flags, ["id", "status", "next", "note"], "applications set");
+      requireOnly(flags, ["id", "status", "next", "note", "confirm"], "applications set");
       const statuses = ["shortlisted", "ready_for_review", "user_submitted", "interview", "offer", "rejected", "withdrawn"] as const;
       if (!flags.id || !flags.status || !statuses.includes(flags.status as ApplicationStatus)) throw new Error(`applications set requires --id and --status (${statuses.join("|")})`);
-      console.log(JSON.stringify(repository.setApplicationStatus(flags.id, flags.status as ApplicationStatus, { nextAction: flags.next, note: flags.note, actor: "user" }), null, 2));
+      const status = flags.status as ApplicationStatus;
+      const current = repository.listApplications().find((item) => item.job_id === flags.id);
+      const explicitlyConfirmed = flags.confirm === "yes";
+      if (["user_submitted", "interview", "offer", "rejected", "withdrawn"].includes(status) && !explicitlyConfirmed) {
+        throw new Error(`${status} requires --confirm yes because it records an external real-world event`);
+      }
+      if (status === "user_submitted" && current?.status !== "ready_for_review") throw new Error("user_submitted requires current status ready_for_review");
+      if (status === "interview" && current?.status !== "user_submitted") throw new Error("interview requires current status user_submitted");
+      if (status === "offer" && current?.status !== "interview") throw new Error("offer requires current status interview");
+      let documentDir: string | undefined;
+      if (status === "ready_for_review") {
+        documentDir = join("workspace", "documents", flags.id).replace(/\\/g, "/");
+        let metadata: { ready_for_submission?: boolean };
+        try { metadata = JSON.parse(await readFile(join(root, documentDir, "metadata.json"), "utf8")) as { ready_for_submission?: boolean }; }
+        catch { throw new Error("ready_for_review requires a generated document packet"); }
+        if (metadata.ready_for_submission !== true) throw new Error("ready_for_review requires document metadata ready_for_submission=true");
+      }
+      console.log(JSON.stringify(repository.setApplicationStatus(flags.id, status, { nextAction: flags.next, note: flags.note, documentDir, actor: explicitlyConfirmed ? "user_confirmed_cli" : "user" }), null, 2));
       return;
     }
     throw new Error("Usage: applications <set|list>");
@@ -218,16 +235,23 @@ async function runReport(root: string, command: string | undefined): Promise<voi
   if (command !== "daily") throw new Error("Usage: report daily");
   const { db, repository } = openRepository(root);
   try {
+    const date = new Date().toISOString().slice(0, 10);
+    const activity = repository.dailyActivity(date);
     const applications = repository.listApplications();
-    const evaluated = repository.listEvaluatedJobIds(50).flatMap((id) => {
+    const evaluated = repository.listEvaluatedJobIds(200).flatMap((id) => {
       const job = repository.readJob(id); const evaluation = repository.readEvaluation(id);
       return job && evaluation ? [{ id, job, evaluation }] : [];
     });
     const top = evaluated.filter(({ evaluation }) => evaluation.verdict !== "BLOCKED" && evaluation.tier !== "C").sort((a, b) => b.evaluation.fit - a.evaluation.fit).slice(0, 5);
-    console.log(`# Daily job-search report — ${new Date().toISOString().slice(0, 10)}\n`);
-    console.log(`Evaluated: ${evaluated.length} | Tracked applications: ${applications.length} | Actionable shortlist: ${top.length}\n`);
+    console.log(`# Daily job-search report — ${date}\n`);
+    console.log(`Imported today: ${activity.imported} | Evaluated today: ${activity.evaluated} | Application updates today: ${activity.application_events}`);
+    console.log(`Tracked applications: ${applications.length} | Statuses: ${Object.entries(activity.statuses).map(([status, count]) => `${status}=${count}`).join(", ") || "none"} | Best matches shown: ${top.length}\n`);
     console.log("## Best matches");
-    console.log(top.length ? top.map(({ id, job, evaluation }) => `- ${job.title ?? "Unknown role"} — ${job.company ?? "Unknown company"}: ${evaluation.tier}, fit ${evaluation.fit}, ${evaluation.verdict} [${id}]`).join("\n") : "- No non-blocked matches yet.");
+    console.log(top.length ? top.map(({ id, job, evaluation }) => {
+      const matches = evaluation.mappings.filter((mapping) => mapping.credit > 0).length;
+      const verify = evaluation.gates.filter((gate) => gate.status === "VERIFY").map((gate) => gate.reason).slice(0, 2).join("; ") || "no open verification gates";
+      return `- ${job.title ?? "Unknown role"} — ${job.company ?? "Unknown company"}: ${evaluation.tier}, fit ${evaluation.fit}, ${matches} evidence matches; verify: ${verify} [${id}]`;
+    }).join("\n") : "- No non-blocked matches above tier C yet.");
     console.log("\n## Next actions");
     const actions = applications.filter((item) => item.next_action).slice(0, 3).map((item) => `- ${item.next_action} [${item.job_id}]`);
     console.log(actions.length ? actions.join("\n") : "- Review the top shortlist and verify shift, salary, and workplace details.");
