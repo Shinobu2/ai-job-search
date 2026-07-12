@@ -11,9 +11,9 @@ bun run doctor
 ## Discover and evaluate
 
 ```powershell
-bun run scripts/cli.ts search freehire
-bun run scripts/cli.ts search ba
-bun run scripts/cli.ts search employers
+bun run search:freehire
+bun run search:ba
+bun run search:employers
 bun run job:check -- --file tests/fixtures/jobs/dct-trainee.md
 ```
 
@@ -46,13 +46,16 @@ verification.
 ```powershell
 bun run applications -- set --id <job-id> --status shortlisted --next "Review shift and salary"
 bun run applications -- set --id <job-id> --status ready_for_review
-bun run applications -- set --id <job-id> --status user_submitted --note "Confirmed by user"
+bun run applications -- set --id <job-id> --status user_submitted --confirm yes --note "Confirmed by user"
 bun run applications -- list
 bun run report:daily
 ```
 
-`user_submitted` is a user-recorded state. The MVP does not post forms, send
-email, or store employer credentials.
+`ready_for_review` is accepted only when the generated packet metadata says it
+is ready. External states (`user_submitted`, `interview`, `offer`, `rejected`,
+`withdrawn`) require `--confirm yes`; submission, interview, and offer also
+enforce their preceding state. The MVP does not post forms, send email, or
+store employer credentials.
 
 ## PDF toolchain
 

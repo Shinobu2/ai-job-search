@@ -36,9 +36,22 @@ export async function runDoctor(root: string, strict = false): Promise<DoctorRep
   for (const name of workspaceNames) {
     try {
       validateWorkspaceFile(name, parse(await readFile(join(root, "workspace.example", `${name}.yml`), "utf8")));
+      validateWorkspaceFile(name, parse(await readFile(join(root, "workspace", `${name}.yml`), "utf8")));
     } catch (error) {
       report.errors.push(error instanceof Error ? error.message : `Invalid ${name} schema`);
     }
+  }
+
+  try {
+    const profile = parse(await readFile(join(root, "workspace", "profile.yml"), "utf8")) as { identity?: Record<string, { value?: string | null }> };
+    const missingIdentity = ["name", "email", "phone"].filter((key) => !profile.identity?.[key]?.value);
+    if (missingIdentity.length) report.warnings.push(`candidate identity is incomplete: ${missingIdentity.join(", ")}`);
+    const evidence = parse(await readFile(join(root, "workspace", "evidence.yml"), "utf8")) as { records?: Array<{ reviewer_status?: string }> };
+    if (!evidence.records?.some((record) => ["user_confirmed", "document_verified"].includes(record.reviewer_status ?? ""))) {
+      report.warnings.push("no confirmed evidence records are available for documents");
+    }
+  } catch {
+    // Active workspace read/validation errors are already reported above.
   }
 
   const guard = Bun.spawnSync(["python", "tools/security_guards.py"], { cwd: root, stdout: "pipe", stderr: "pipe" });

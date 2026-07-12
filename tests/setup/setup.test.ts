@@ -124,3 +124,15 @@ test("doctor reports a missing gitignore instead of throwing", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("doctor validates the active workspace and reports candidate facts that block documents", async () => {
+  const root = await copyExamplesToTemp();
+  try {
+    await setupWorkspace(root);
+    const report = await runDoctor(root);
+    expect(report.warnings).toContain("candidate identity is incomplete: name, email, phone");
+    expect(report.warnings).toContain("no confirmed evidence records are available for documents");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
