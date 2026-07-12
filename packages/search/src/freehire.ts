@@ -32,7 +32,6 @@ type FreehireJob = {
 };
 
 type Envelope<T> = { data: T; meta?: { total?: number } };
-type Fetch = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 export type DiscoveredJob = {
   id: string;
@@ -45,23 +44,17 @@ export type DiscoveredJob = {
   evaluation: EvaluationResult;
 };
 
-export type DiscoveryOptions = { fetch?: Fetch; baseUrl?: string; asOf?: string };
+export type DiscoveryOptions = { asOf?: string };
 
-const DEFAULT_BASE_URL = "https://freehire.dev";
+const FREEHIRE_BASE_URL = "https://freehire.dev";
 const MAX_DISCOVERY_RESULTS = 50;
-
-function baseUrl(value?: string): string {
-  const base = (value ?? process.env.FREEHIRE_API_URL ?? DEFAULT_BASE_URL).trim().replace(/\/+$/, "");
-  if (!/^https?:\/\//i.test(base)) throw new Error("FreeHire base URL must be an absolute HTTP(S) URL");
-  return base;
-}
 
 function isoToday(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-async function getJson<T>(fetch_: Fetch, url: string): Promise<T> {
-  const response = await fetch_(url, { headers: { Accept: "application/json" }, redirect: "follow" });
+async function getJson<T>(url: string): Promise<T> {
+  const response = await fetch(url, { headers: { Accept: "application/json" }, redirect: "error" });
   if (!response.ok) throw new Error(`FreeHire read failed: ${response.status} ${response.statusText}`);
   try {
     return await response.json() as T;
@@ -70,11 +63,11 @@ async function getJson<T>(fetch_: Fetch, url: string): Promise<T> {
   }
 }
 
-function searchUrl(base: string, source: FreehireSourceConfig, keyword: string, page: number): string {
+function searchUrl(source: FreehireSourceConfig, keyword: string, page: number): string {
   const params = new URLSearchParams({ q: keyword, limit: String(source.page_size), offset: String((page - 1) * source.page_size), semantic_ratio: "0" });
   params.append("countries", source.country);
   for (const city of source.cities) params.append("cities", city);
-  return `${base}/api/v1/jobs/search?${params.toString()}`;
+  return `${FREEHIRE_BASE_URL}/api/v1/jobs/search?${params.toString()}`;
 }
 
 function canonicalText(job: FreehireJob): string {
@@ -107,12 +100,10 @@ export async function discoverFreehire(
 ): Promise<DiscoveredJob[]> {
   if (!source.enabled) throw new Error("FreeHire source is disabled by workspace policy");
   if (source.mode !== "read_import_evaluate") throw new Error("FreeHire source must use read_import_evaluate mode");
-  const fetch_ = options.fetch ?? fetch;
-  const base = baseUrl(options.baseUrl);
   const seen = new Map<string, FreehireJob>();
   for (const keyword of source.keywords) {
     for (let page = 1; page <= source.max_pages; page += 1) {
-      const envelope = await getJson<Envelope<FreehireJob[]>>(fetch_, searchUrl(base, source, keyword, page));
+      const envelope = await getJson<Envelope<FreehireJob[]>>(searchUrl(source, keyword, page));
       for (const job of envelope.data ?? []) {
         if (job.public_slug && !seen.has(job.public_slug) && seen.size < MAX_DISCOVERY_RESULTS) seen.set(job.public_slug, job);
       }
@@ -123,9 +114,7 @@ export async function discoverFreehire(
 
   const rows: DiscoveredJob[] = [];
   for (const summary of seen.values()) {
-    const detailEnvelope = await getJson<Envelope<FreehireJob>>(
-      fetch_, `${base}/api/v1/jobs/${encodeURIComponent(summary.public_slug)}`,
-    );
+    const detailEnvelope = await getJson<Envelope<FreehireJob>>(`${FREEHIRE_BASE_URL}/api/v1/jobs/${encodeURIComponent(summary.public_slug)}`);
     const detail = detailEnvelope.data;
     if (!detail?.public_slug || !detail.url) throw new Error("FreeHire detail is missing public identity");
     const sourceId = `freehire:${detail.public_slug}`;

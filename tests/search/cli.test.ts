@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 
 const root = resolve(import.meta.dir, "../..");
 const cli = join(root, "scripts", "cli.ts");
+const freehireFetchFixture = join(root, "tests", "search", "freehire-fetch.fixture.ts");
 
 function payload(job: unknown) {
   return new Response(JSON.stringify({ data: job }), { headers: { "content-type": "application/json" } });
@@ -24,9 +25,9 @@ test("search freehire imports, evaluates, and prints a local shortlist without s
     },
   });
   try {
-    const child = Bun.spawn([process.execPath, cli, "search", "freehire"], {
+    const child = Bun.spawn([process.execPath, "--preload", freehireFetchFixture, cli, "search", "freehire"], {
       cwd: directory,
-      env: { ...process.env, FREEHIRE_API_URL: server.url.toString().replace(/\/$/, "") },
+      env: { ...process.env, FREEHIRE_TEST_ENDPOINT: server.url.toString() },
       stdout: "pipe", stderr: "pipe",
     });
     expect(await child.exited).toBe(0);

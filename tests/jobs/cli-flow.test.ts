@@ -65,16 +65,20 @@ test("job commands import, evaluate, export, and reuse a local vacancy", async (
   }
 });
 
-test("job export preserves the persisted DCT trainee archetype and domain gate IDs", async () => {
+test("job export round-trips persisted DCT trainee domain IDs", async () => {
   const directory = await workspace();
   try {
     const imported = outputJson<{ id: string }>(await run(directory, "job", "import", "--file", join(directory, "fixtures", "dct-trainee.md")));
-    const evaluated = outputJson<{ archetype: string; gates: Array<{ id: string }> }>(await run(directory, "job", "evaluate", "--id", imported.id));
-    const exported = outputJson<{ archetype: string; gates: Array<{ id: string }> }>(await run(directory, "job", "export", "--id", imported.id));
+    const evaluated = outputJson<{ archetype: string; gates: Array<{ id: string }>; mappings: Array<{ id: string; requirementId: string }> }>(await run(directory, "job", "evaluate", "--id", imported.id));
+    const exported = outputJson<{ archetype: string; gates: Array<{ id: string }>; mappings: Array<{ id: string; requirementId: string }> }>(await run(directory, "job", "export", "--id", imported.id));
+    const persisted = JSON.parse(await readFile(join(directory, "workspace", "exports", `${imported.id}.json`), "utf8")) as typeof exported;
 
     expect(evaluated.archetype).toBe("AT");
     expect(exported.archetype).toBe("AT");
     expect(exported.gates.map((gate) => gate.id)).toEqual(evaluated.gates.map((gate) => gate.id));
+    expect(exported.mappings).toEqual(evaluated.mappings);
+    expect(persisted.gates.map((gate) => gate.id)).toEqual(evaluated.gates.map((gate) => gate.id));
+    expect(persisted.mappings).toEqual(evaluated.mappings);
     expect(exported.gates.map((gate) => gate.id)).toEqual(["archetype", "shift", "transport", "physical", "scope", "facilities", "language", "experience", "salary", "deadline"]);
   } finally {
     await rm(directory, { recursive: true, force: true });
