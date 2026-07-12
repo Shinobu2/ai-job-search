@@ -31,13 +31,24 @@ test("capabilities require explicit tested and certified transitions with passin
   const fixture = await registry();
   try {
     const metadata = { actor: "reviewer", reason: "implemented locally", reportHash: "c".repeat(64) };
-    fixture.capabilityRegistry.transition("manual_job_import", "implemented", metadata);
     fixture.capabilityRegistry.markTested("manual_job_import", metadata);
     expect(() => fixture.capabilityRegistry.transition("manual_job_import", "certified", metadata)).toThrow("certify");
     expect(() => fixture.capabilityRegistry.certify("manual_job_import", { ...metadata, passing: false })).toThrow("passing");
     fixture.capabilityRegistry.certify("manual_job_import", { ...metadata, passing: true });
     expect(fixture.capabilityRegistry.get("manual_job_import")?.status).toBe("certified");
     expect(() => fixture.capabilityRegistry.transition("manual_job_import", "implemented", metadata)).toThrow("transition");
+  } finally {
+    fixture.db.close();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test("disabled read capability requires an explicit audited re-enable transition", async () => {
+  const fixture = await registry();
+  try {
+    const metadata = { actor: "reviewer", reason: "read-only adapters verified", reportHash: "d".repeat(64) };
+    fixture.capabilityRegistry.transition("live_connectors", "disabled", metadata);
+    expect(fixture.capabilityRegistry.transition("live_connectors", "implemented", metadata).status).toBe("implemented");
   } finally {
     fixture.db.close();
     await rm(fixture.directory, { recursive: true, force: true });

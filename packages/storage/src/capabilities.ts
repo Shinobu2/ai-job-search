@@ -45,7 +45,7 @@ export class CapabilityRegistry {
     validateMetadata(metadata);
     if (target === "certified") throw new Error("Use certify() for certification");
     const current = this.getRequired(id);
-    const permitted = target === "disabled" || (current.status === "unavailable" && target === "implemented") || (current.status === "implemented" && target === "tested");
+    const permitted = target === "disabled" || ((current.status === "unavailable" || current.status === "disabled") && target === "implemented") || (current.status === "implemented" && target === "tested");
     if (!permitted) throw new Error(`Invalid capability transition from ${current.status} to ${target}`);
     return this.writeTransition(current, target, metadata);
   }
