@@ -84,7 +84,10 @@ function requirementsFor(fields: Record<string, ExtractedField>, rules_: Require
 
 export function extractVacancy(text: string): ExtractedJob {
   const fields = Object.fromEntries(rules.fields.map((rule) => [rule.id, fieldFor(text, rule)])) as Record<string, ExtractedField>;
-  for (const rule of rules.derived_fields) fields[rule.id] = derivedField(fields, rule);
+  for (const rule of rules.derived_fields) {
+    const derived = derivedField(fields, rule);
+    if (!fields[rule.id] || fields[rule.id].state === "unknown" || derived.state === "known") fields[rule.id] = derived;
+  }
   const requirements = requirementsFor(fields, rules.requirements);
   const uncertainties = Object.entries(fields).filter(([, field]) => field.state === "unknown").map(([id]) => id);
   return { version: rules.version, fields, requirements, uncertainties };
