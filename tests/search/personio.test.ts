@@ -39,7 +39,22 @@ test("Personio parser handles CDATA, entities, nested markup, repeated offices, 
 
 test("Personio parser rejects malformed or unbalanced XML", () => {
   expect(() => parsePersonioXml("<workzag-jobs><position><id>42</id></workzag-jobs>")).toThrow("Malformed XML");
-  expect(() => parsePersonioXml("<workzag-jobs><position></position></workzag-jobs>")).not.toThrow();
+  expect(() => parsePersonioXml("<workzag-jobs><position></position></workzag-jobs>")).toThrow("position requires id and name");
+});
+
+test("Personio parser is case-sensitive and rejects unknown or malformed entities", () => {
+  expect(() => parsePersonioXml("<workzag-jobs><position><id>42</ID><name>Technician</name></position></workzag-jobs>")).toThrow("Malformed XML");
+  expect(() => parsePersonioXml("<workzag-jobs><position><id>42</id><name>R&ampbogus;D</name></position></workzag-jobs>")).toThrow("entity");
+  expect(() => parsePersonioXml("<workzag-jobs><position><id>42</id><name>R&bogus;</name></position></workzag-jobs>")).toThrow("entity");
+});
+
+test("Personio reader treats missing required position identity and empty XML as parse failures", async () => {
+  for (const xml of ["<workzag-jobs><position><office>Frankfurt</office></position></workzag-jobs>", ""]) {
+    const batch = await readPersonioEmployer(employer, (async () => new Response(xml, { status: 200 })) as unknown as typeof fetch);
+    expect(batch.status).toBe("failed");
+    expect(batch.jobs).toEqual([]);
+    expect(batch.diagnostics).toEqual([expect.objectContaining({ stage: "parse", code: "invalid_xml", transient: false })]);
+  }
 });
 
 test("Personio reader uses only approved registry endpoints and performs GET-only XML reads", async () => {
@@ -102,6 +117,21 @@ test("Personio discovery imports and observes jobs before actionability filterin
     expect(batch.diagnostics.map((entry) => entry.code)).toEqual(["out_of_area", "location_unknown"]);
     expect(db.query("SELECT COUNT(*) AS count FROM discovery_observations").get()).toEqual({ count: 3 });
     expect(db.query("SELECT status FROM discovery_runs").get()).toEqual({ status: "success" });
+  } finally {
+    db.close();
+  }
+});
+
+test("Personio malformed discovery finishes its run instead of leaving it running", async () => {
+  const db = openDatabase(":memory:");
+  migrate(db);
+  try {
+    const batch = await discoverPersonioEmployer(employer, new StorageRepository(db), workspace as never, {
+      fetcher: (async () => new Response("<workzag-jobs><position></workzag-jobs>", { status: 200 })) as unknown as typeof fetch,
+    });
+    expect(batch.status).toBe("failed");
+    expect(db.query("SELECT status FROM discovery_runs").get()).toEqual({ status: "failed" });
+    expect(db.query("SELECT COUNT(*) AS count FROM discovery_runs WHERE status = 'running'").get()).toEqual({ count: 0 });
   } finally {
     db.close();
   }

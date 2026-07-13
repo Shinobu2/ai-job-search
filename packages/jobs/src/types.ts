@@ -6,6 +6,11 @@ export type ImportRequest = {
   sourceType?: string;
 };
 
+export type DiscoveryImportOptions = {
+  discoveryRunId?: string;
+  observedAt?: string;
+};
+
 export type ImportedJob = {
   id: string;
   reused: boolean;

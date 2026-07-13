@@ -62,3 +62,13 @@ export type DiscoveryConnector = (
 export function emptyCounters(): DiscoveryCounters {
   return { searched: 0, detailed: 0, imported: 0, skipped: 0, failed: 0 };
 }
+
+export function isActionableDiscoveryJob(job: DiscoveredJob): boolean {
+  const evaluation = job.evaluation;
+  return job.actionable
+    && evaluation !== undefined
+    && evaluation.archetype !== "X"
+    && evaluation.tier !== "C"
+    && evaluation.verdict !== "BLOCKED"
+    && !evaluation.gates.some((gate) => gate.status === "BLOCKED");
+}

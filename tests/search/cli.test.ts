@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { validateWorkspaceFile } from "../../packages/core/src/workspace";
 import { openDatabase } from "../../packages/storage/src/database";
+import { isActionableDiscoveryJob, type DiscoveredJob } from "../../packages/search/src/types";
 
 const root = resolve(import.meta.dir, "../..");
 const cli = join(root, "scripts", "cli.ts");
@@ -14,6 +15,24 @@ const personioFetchFixture = join(root, "tests", "search", "personio-fetch.fixtu
 function payload(job: unknown) {
   return new Response(JSON.stringify({ data: job }), { headers: { "content-type": "application/json" } });
 }
+
+function discoveryJob(overrides: Partial<DiscoveredJob> = {}): DiscoveredJob {
+  return {
+    id: "job", reused: false, sourceId: "source", stableSourceId: "source", sourceUrl: "https://jobs.example/job",
+    title: "Technician", company: "Fixture", location: "Frankfurt", logicalVacancyId: "vacancy", version: 1, actionable: true,
+    evaluation: { jobId: "job", archetype: "A", gates: [], mappings: [], fit: 50, survival: null, confidence: "medium", tier: "B", verdict: "PROCEED", fingerprint: "hash" },
+    ...overrides,
+  };
+}
+
+test("actionable discovery requires geography, supported archetype, S/A/B tier, and no blocked gate or verdict", () => {
+  expect(isActionableDiscoveryJob(discoveryJob())).toBe(true);
+  expect(isActionableDiscoveryJob(discoveryJob({ actionable: false }))).toBe(false);
+  expect(isActionableDiscoveryJob(discoveryJob({ evaluation: { ...discoveryJob().evaluation!, tier: "C" } }))).toBe(false);
+  expect(isActionableDiscoveryJob(discoveryJob({ evaluation: { ...discoveryJob().evaluation!, archetype: "X" } }))).toBe(false);
+  expect(isActionableDiscoveryJob(discoveryJob({ evaluation: { ...discoveryJob().evaluation!, verdict: "BLOCKED" } }))).toBe(false);
+  expect(isActionableDiscoveryJob(discoveryJob({ evaluation: { ...discoveryJob().evaluation!, gates: [{ id: "shift", status: "BLOCKED", critical: true, reason: "blocked", facts: [] }] } }))).toBe(false);
+});
 
 test("legacy schema-v1 search config remains valid until discovery is configured", () => {
   expect(() => validateWorkspaceFile("search", { schema_version: 1 })).not.toThrow();
@@ -57,10 +76,10 @@ test("search freehire imports, evaluates, and prints a local shortlist without s
     expect(await child.exited).toBe(0);
     expect(await new Response(child.stderr).text()).toBe("");
     const stdout = await new Response(child.stdout).text();
-    expect(stdout).toContain("FreeHire discovered: 3 | actionable shortlist: 1");
+    expect(stdout).toContain("FreeHire discovered: 3 | actionable shortlist: 0");
     expect(stdout).toContain("Counters: searched=28 detailed=4 imported=3 skipped=1 failed=1");
     expect(stdout).toContain("[detail] http_503 fixture-failed");
-    expect(stdout).toContain("Data Center Technician");
+    expect(stdout).not.toContain("Data Center Technician — Fixture DC");
     expect(stdout).not.toContain("Warehouse Operative");
     expect(stdout).not.toContain("Munich Technician");
     expect(stdout).toContain("No application was submitted.");
@@ -83,7 +102,7 @@ test("search jobsuche imports, evaluates, and prints a local shortlist without s
     fetch(request) {
       const path = new URL(request.url).pathname;
       if (path.endsWith("/jobs")) return new Response(JSON.stringify({ stellenangebote: [job] }), { headers: { "content-type": "application/json" } });
-      if (path.endsWith("/MTAwMDEtMTAwMjcxNjkyMi1T")) return new Response(JSON.stringify({ ...job, stellenangebotsTitel: job.beruf, stellenangebotsBeschreibung: "Skills: hardware replacement", arbeitsorte: [job.arbeitsort] }), { headers: { "content-type": "application/json" } });
+      if (path.endsWith("/MTAwMDEtMTAwMjcxNjkyMi1T")) return new Response(JSON.stringify({ ...job, stellenangebotsTitel: job.beruf, stellenangebotsBeschreibung: "Skills: hardware replacement\nNachtarbeit ist erforderlich.", arbeitsorte: [job.arbeitsort] }), { headers: { "content-type": "application/json" } });
       return new Response("not found", { status: 404 });
     },
   });
@@ -96,10 +115,45 @@ test("search jobsuche imports, evaluates, and prints a local shortlist without s
     expect(await child.exited).toBe(0);
     expect(await new Response(child.stderr).text()).toBe("");
     const stdout = await new Response(child.stdout).text();
-    expect(stdout).toContain("Jobsuche discovered: 1 | actionable shortlist: 1 | showing: 1");
+    expect(stdout).toContain("Jobsuche discovered: 1 | actionable shortlist: 0 | showing: 0");
     expect(stdout).toContain("Counters: searched=1 detailed=1 imported=1 skipped=0 failed=0");
-    expect(stdout).toContain("Data Center Technician");
+    expect(stdout).not.toContain("Data Center Technician — Fixture DC");
     expect(stdout).toContain("No application was submitted.");
+    const db = openDatabase(join(directory, "workspace", "control-room.sqlite"));
+    try { expect(db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 1 }); }
+    finally { db.close(); }
+  } finally {
+    server.stop(true);
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
+  }
+});
+
+test("search employers stores Tier C, X, and blocked jobs without printing them", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "career-control-room-personio-filter-cli-"));
+  await cp(join(root, "workspace.example"), join(directory, "workspace"), { recursive: true });
+  const server = Bun.serve({
+    port: 0,
+    fetch: () => new Response(`<workzag-jobs>
+      <position><id>c</id><name>Data Center Technician</name><office>Frankfurt</office><jobDescriptions><jobDescription><value>Hardware support</value></jobDescription></jobDescriptions></position>
+      <position><id>x</id><name>Warehouse Operative</name><office>Frankfurt</office></position>
+      <position><id>blocked</id><name>Data Center Technician 24/7</name><office>Frankfurt</office></position>
+    </workzag-jobs>`, { status: 200 }),
+  });
+  try {
+    const child = Bun.spawn([process.execPath, "--preload", personioFetchFixture, cli, "search", "employers"], {
+      cwd: directory,
+      env: { ...process.env, PERSONIO_TEST_ENDPOINT: server.url.toString() },
+      stdout: "pipe", stderr: "pipe",
+    });
+    expect(await child.exited).toBe(0);
+    expect(await new Response(child.stderr).text()).toBe("");
+    const stdout = await new Response(child.stdout).text();
+    expect(stdout).toContain("Employer shortlist: 0");
+    expect(stdout).not.toContain("Data Center Technician — maincubes");
+    expect(stdout).not.toContain("Warehouse Operative — maincubes");
+    const db = openDatabase(join(directory, "workspace", "control-room.sqlite"));
+    try { expect(db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 3 }); }
+    finally { db.close(); }
   } finally {
     server.stop(true);
     await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });

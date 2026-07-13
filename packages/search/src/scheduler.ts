@@ -4,7 +4,6 @@ import type { DiscoveryCounters, DiscoveryStatus } from "./types";
 
 const MAX_CONCURRENCY = 5;
 const RETRY_DELAYS = [250, 500] as const;
-const runSequences = new Map<string, number>();
 
 export async function mapBounded<T, R>(
   values: T[],
@@ -78,6 +77,7 @@ export async function fetchWithRetry(
         transient,
       );
       if (!transient || attempt === RETRY_DELAYS.length) throw failure;
+      await response.body?.cancel();
     } catch (error) {
       const failure = networkFailure(error);
       if (!failure || !failure.transient || attempt === RETRY_DELAYS.length) throw failure ?? error;
@@ -127,9 +127,7 @@ export function parseJson<T>(response: Response, label: string): Promise<T> {
 export function discoveryRunIdentity(sourceId: string, scope: unknown, startedAt: string): { runId: string; scopeHash: string } {
   const scopeHash = createHash("sha256").update(JSON.stringify(scope)).digest("hex");
   const identity = `${sourceId}\n${scopeHash}\n${startedAt}`;
-  const sequence = runSequences.get(identity) ?? 0;
-  runSequences.set(identity, sequence + 1);
-  const runHash = createHash("sha256").update(`${identity}\n${sequence}`).digest("hex");
+  const runHash = createHash("sha256").update(identity).digest("hex");
   return { runId: `discovery_${runHash}`, scopeHash };
 }
 

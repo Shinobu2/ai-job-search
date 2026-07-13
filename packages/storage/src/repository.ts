@@ -195,6 +195,20 @@ export class StorageRepository {
     return { id: input.id, status: "running" };
   }
 
+  startDiscoveryRunAllocated(input: DiscoveryRunInput): { id: string; status: "running" } {
+    const maximumAttempts = 100;
+    for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
+      const id = attempt === 0 ? input.id : `${input.id}_${attempt}`;
+      try {
+        return this.startDiscoveryRun({ ...input, id });
+      } catch (error) {
+        const code = (error as { code?: string }).code;
+        if (code !== "SQLITE_CONSTRAINT_PRIMARYKEY" && code !== "SQLITE_CONSTRAINT_UNIQUE") throw error;
+      }
+    }
+    throw new Error(`Unable to allocate discovery run ID after ${maximumAttempts} deterministic attempts: ${input.id}`);
+  }
+
   finishDiscoveryRun(runId: string, input: DiscoveryRunFinishInput): void {
     requireValue(runId, "discoveryRun.id");
     const finishedAt = input.finishedAt ?? now();
@@ -243,6 +257,11 @@ export class StorageRepository {
   }
 
   observeVacancy(input: ObservationInput): { logicalVacancyId: string; version: number } {
+    const write = this.db.transaction(() => this.observeVacancyRows(input));
+    return write.immediate() as { logicalVacancyId: string; version: number };
+  }
+
+  private observeVacancyRows(input: ObservationInput): { logicalVacancyId: string; version: number } {
     requireValue(input.jobId, "observation.jobId");
     requireHash(input.rawHash, "observation.rawHash");
     const observedAt = input.observedAt ?? now();
@@ -252,44 +271,41 @@ export class StorageRepository {
     const stableKey = canonicalUrl ?? (input.stableSourceId ? `source-id:${input.stableSourceId}` : input.rawHash);
     const logicalVacancyId = `vacancy_${createHash("sha256").update(stableKey).digest("hex")}`;
 
-    const write = this.db.transaction(() => {
-      const job = this.db.query("SELECT raw_snapshot_hash FROM jobs WHERE id = ?").get(input.jobId) as { raw_snapshot_hash: string } | null;
-      if (!job) throw new Error(`Unknown job ID: ${input.jobId}`);
-      if (job.raw_snapshot_hash !== input.rawHash) throw new Error("observation rawHash must match the immutable job snapshot");
+    const job = this.db.query("SELECT raw_snapshot_hash FROM jobs WHERE id = ?").get(input.jobId) as { raw_snapshot_hash: string } | null;
+    if (!job) throw new Error(`Unknown job ID: ${input.jobId}`);
+    if (job.raw_snapshot_hash !== input.rawHash) throw new Error("observation rawHash must match the immutable job snapshot");
 
-      const logical = this.db.query("SELECT id FROM logical_vacancies WHERE stable_key = ?").get(stableKey) as { id: string } | null;
-      if (!logical) {
-        this.db.query("INSERT INTO logical_vacancies (id, stable_key, canonical_url, first_seen_at, last_seen_at, consecutive_misses, lifecycle_status) VALUES (?, ?, ?, ?, ?, 0, 'active')")
-          .run(logicalVacancyId, stableKey, canonicalUrl, observedAt, observedAt);
-      }
-      const resolvedId = logical?.id ?? logicalVacancyId;
-      const existingVersion = this.db.query("SELECT logical_vacancy_id, version FROM vacancy_versions WHERE job_id = ?").get(input.jobId) as { logical_vacancy_id: string; version: number } | null;
-      if (existingVersion && existingVersion.logical_vacancy_id !== resolvedId) throw new Error(`Job ${input.jobId} is already attached to another logical vacancy`);
-      let version = existingVersion?.version;
-      if (version === undefined) {
-        const latest = this.db.query("SELECT MAX(version) AS version FROM vacancy_versions WHERE logical_vacancy_id = ?").get(resolvedId) as { version: number | null };
-        version = (latest.version ?? 0) + 1;
-        this.db.query("INSERT INTO vacancy_versions (logical_vacancy_id, job_id, version, observed_at) VALUES (?, ?, ?, ?)")
-          .run(resolvedId, input.jobId, version, observedAt);
-      }
-      this.db.query("UPDATE logical_vacancies SET last_seen_at = ?, consecutive_misses = 0, lifecycle_status = 'active' WHERE id = ?")
-        .run(observedAt, resolvedId);
-      if (input.discoveryRunId) {
-        const run = this.db.query("SELECT status, source_id, scope_hash FROM discovery_runs WHERE id = ?").get(input.discoveryRunId) as { status: DiscoveryRunStatus; source_id: string; scope_hash: string } | null;
-        if (!run) throw new Error(`Unknown discovery run: ${input.discoveryRunId}`);
-        if (run.status !== "running") throw new Error(`Discovery run ${input.discoveryRunId} is already finished`);
-        this.db.query(
-          `INSERT INTO discovery_memberships (logical_vacancy_id, source_id, scope_hash, consecutive_misses, last_seen_at)
+    const logical = this.db.query("SELECT id FROM logical_vacancies WHERE stable_key = ?").get(stableKey) as { id: string } | null;
+    if (!logical) {
+      this.db.query("INSERT INTO logical_vacancies (id, stable_key, canonical_url, first_seen_at, last_seen_at, consecutive_misses, lifecycle_status) VALUES (?, ?, ?, ?, ?, 0, 'active')")
+        .run(logicalVacancyId, stableKey, canonicalUrl, observedAt, observedAt);
+    }
+    const resolvedId = logical?.id ?? logicalVacancyId;
+    const existingVersion = this.db.query("SELECT logical_vacancy_id, version FROM vacancy_versions WHERE job_id = ?").get(input.jobId) as { logical_vacancy_id: string; version: number } | null;
+    if (existingVersion && existingVersion.logical_vacancy_id !== resolvedId) throw new Error(`Job ${input.jobId} is already attached to another logical vacancy`);
+    let version = existingVersion?.version;
+    if (version === undefined) {
+      const latest = this.db.query("SELECT MAX(version) AS version FROM vacancy_versions WHERE logical_vacancy_id = ?").get(resolvedId) as { version: number | null };
+      version = (latest.version ?? 0) + 1;
+      this.db.query("INSERT INTO vacancy_versions (logical_vacancy_id, job_id, version, observed_at) VALUES (?, ?, ?, ?)")
+        .run(resolvedId, input.jobId, version, observedAt);
+    }
+    this.db.query("UPDATE logical_vacancies SET last_seen_at = ?, consecutive_misses = 0, lifecycle_status = 'active' WHERE id = ?")
+      .run(observedAt, resolvedId);
+    if (input.discoveryRunId) {
+      const run = this.db.query("SELECT status, source_id, scope_hash FROM discovery_runs WHERE id = ?").get(input.discoveryRunId) as { status: DiscoveryRunStatus; source_id: string; scope_hash: string } | null;
+      if (!run) throw new Error(`Unknown discovery run: ${input.discoveryRunId}`);
+      if (run.status !== "running") throw new Error(`Discovery run ${input.discoveryRunId} is already finished`);
+      this.db.query(
+        `INSERT INTO discovery_memberships (logical_vacancy_id, source_id, scope_hash, consecutive_misses, last_seen_at)
            VALUES (?, ?, ?, 0, ?)
            ON CONFLICT(logical_vacancy_id, source_id, scope_hash)
            DO UPDATE SET consecutive_misses = 0, last_seen_at = excluded.last_seen_at`,
-        ).run(resolvedId, run.source_id, run.scope_hash, observedAt);
-        this.db.query("INSERT OR IGNORE INTO discovery_observations (run_id, logical_vacancy_id, observed_at) VALUES (?, ?, ?)")
-          .run(input.discoveryRunId, resolvedId, observedAt);
-      }
-      return { logicalVacancyId: resolvedId, version };
-    });
-    return write.immediate() as { logicalVacancyId: string; version: number };
+      ).run(resolvedId, run.source_id, run.scope_hash, observedAt);
+      this.db.query("INSERT OR IGNORE INTO discovery_observations (run_id, logical_vacancy_id, observed_at) VALUES (?, ?, ?)")
+        .run(input.discoveryRunId, resolvedId, observedAt);
+    }
+    return { logicalVacancyId: resolvedId, version };
   }
 
   listCurrentVacancies(): CurrentVacancy[] {
@@ -390,25 +406,42 @@ export class StorageRepository {
   }
 
   importJob(input: JobImportInput): { id: string; existing: boolean } {
+    this.validateJobImport(input);
+    const write = this.db.transaction(() => this.insertJobRows(input));
+    write.immediate();
+    return { id: input.job.id, existing: false };
+  }
+
+  importJobAndObserve(input: JobImportInput, observation: ObservationInput): { id: string; existing: false; logicalVacancyId: string; version: number } {
+    this.validateJobImport(input);
+    if (observation.jobId !== input.job.id) throw new Error("observation.jobId must reference the imported job");
+    if (observation.rawHash !== input.job.rawSnapshotHash) throw new Error("observation.rawHash must match the imported job snapshot");
+    const write = this.db.transaction(() => {
+      this.insertJobRows(input);
+      const observed = this.observeVacancyRows(observation);
+      return { id: input.job.id, existing: false as const, ...observed };
+    });
+    return write.immediate() as { id: string; existing: false; logicalVacancyId: string; version: number };
+  }
+
+  private validateJobImport(input: JobImportInput): void {
     requireValue(input.source.id, "source.id");
     requireValue(input.job.id, "job.id");
     if (input.job.sourceId !== input.source.id) throw new Error("job.sourceId must reference source.id");
     requireHash(input.source.rawHash, "source.rawHash");
     requireHash(input.job.rawSnapshotHash, "job.rawSnapshotHash");
     if (!isProvenance(input.source.provenance) || !isProvenance(input.job.provenance)) throw new Error("source and job provenance are required");
+  }
 
-    const write = this.db.transaction(() => {
-      const hasBom = input.source.rawContent.startsWith("\ufeff");
-      this.db.query(
-        `INSERT INTO job_sources (id, source_type, raw_content, raw_hash, source_locator, supplied_url, imported_at, provenance_json, created_at) VALUES (?, ?, ${hasBom ? "char(65279) || ?" : "?"}, ?, ?, ?, ?, ?, ?)`,
-      ).run(input.source.id, input.source.sourceType, hasBom ? input.source.rawContent.slice(1) : input.source.rawContent, input.source.rawHash, input.source.sourceLocator ?? null, input.source.suppliedUrl ?? null, input.source.importedAt, JSON.stringify(input.source.provenance), now());
-      this.db.query(
-        "INSERT INTO jobs (id, source_id, title, company, location, raw_snapshot_hash, provenance_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      ).run(input.job.id, input.job.sourceId, input.job.title ?? null, input.job.company ?? null, input.job.location ?? null, input.job.rawSnapshotHash, JSON.stringify(input.job.provenance), now());
-      this.event("job.imported", "job", input.job.id, "system", null, null, { source_id: input.source.id });
-    });
-    write.immediate();
-    return { id: input.job.id, existing: false };
+  private insertJobRows(input: JobImportInput): void {
+    const hasBom = input.source.rawContent.startsWith("\ufeff");
+    this.db.query(
+      `INSERT INTO job_sources (id, source_type, raw_content, raw_hash, source_locator, supplied_url, imported_at, provenance_json, created_at) VALUES (?, ?, ${hasBom ? "char(65279) || ?" : "?"}, ?, ?, ?, ?, ?, ?)`,
+    ).run(input.source.id, input.source.sourceType, hasBom ? input.source.rawContent.slice(1) : input.source.rawContent, input.source.rawHash, input.source.sourceLocator ?? null, input.source.suppliedUrl ?? null, input.source.importedAt, JSON.stringify(input.source.provenance), now());
+    this.db.query(
+      "INSERT INTO jobs (id, source_id, title, company, location, raw_snapshot_hash, provenance_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(input.job.id, input.job.sourceId, input.job.title ?? null, input.job.company ?? null, input.job.location ?? null, input.job.rawSnapshotHash, JSON.stringify(input.job.provenance), now());
+    this.event("job.imported", "job", input.job.id, "system", null, null, { source_id: input.source.id });
   }
 
   persistEvaluation(input: EvaluationInput): { id: string; existing: boolean } {

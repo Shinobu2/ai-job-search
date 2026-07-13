@@ -188,8 +188,8 @@ export async function discoverJobsuche(
 
   const now = options.now ?? (() => new Date().toISOString());
   const startedAt = now();
-  const { runId, scopeHash } = discoveryRunIdentity(source.id, normalizedScope(source), startedAt);
-  repository.startDiscoveryRun({ id: runId, sourceId: source.id, scopeHash, startedAt });
+  const identity = discoveryRunIdentity(source.id, normalizedScope(source), startedAt);
+  const runId = repository.startDiscoveryRunAllocated({ id: identity.runId, sourceId: source.id, scopeHash: identity.scopeHash, startedAt }).id;
 
   const counters = emptyCounters();
   const diagnostics: SourceDiagnostic[] = [];
@@ -198,8 +198,15 @@ export async function discoverJobsuche(
   const failedScopes = new Set<number>();
   const completedScopes = new Set<number>();
   const seen = new Map<string, JobsucheSearchJob>();
+  const rows: DiscoveredJob[] = [];
+  let batch!: DiscoveryBatch;
 
-  for (let page = 1; page <= source.max_pages && active.some(Boolean); page += 1) {
+  try {
+    if (scopes.length === 0) {
+      counters.failed += 1;
+      diagnostics.push({ stage: "search", locator: source.id, code: "empty_scope", message: "Jobsuche discovery requires at least one keyword and city scope", transient: false });
+    }
+    for (let page = 1; page <= source.max_pages && active.some(Boolean); page += 1) {
     const pageScopes = scopes.map((scope, index) => ({ scope, index })).filter(({ index }) => active[index]);
     const settled = await mapBounded(pageScopes, CONCURRENCY, async ({ scope }) => {
       const url = searchUrl(scope.keyword, scope.city, page, source.page_size);
@@ -217,7 +224,10 @@ export async function discoverJobsuche(
       }
       for (const job of result.value) {
         const refnr = referenceNumber(job);
-        if (refnr && !seen.has(refnr)) seen.set(refnr, job);
+        if (!refnr) {
+          counters.failed += 1;
+          diagnostics.push({ stage: "parse", locator: searchUrl(scope.keyword, scope.city, page, source.page_size), code: "invalid_record", message: "Jobsuche search record is missing a reference number", transient: false });
+        } else if (!seen.has(refnr)) seen.set(refnr, job);
       }
       if (result.value.length < source.page_size || page === source.max_pages) {
         active[index] = false;
@@ -228,12 +238,11 @@ export async function discoverJobsuche(
       for (const { index } of pageScopes) if (!failedScopes.has(index)) completedScopes.add(index);
       break;
     }
-  }
+    }
 
   const summaries = [...seen.entries()].slice(0, MAX_DISCOVERY_RESULTS);
   counters.detailed = summaries.length;
   const details = await mapBounded(summaries, CONCURRENCY, async ([refnr]) => detailRecord(await readJson<JobsucheDetail>(detailUrl(refnr), options, "Jobsuche")));
-  const rows: DiscoveredJob[] = [];
   for (let index = 0; index < details.length; index += 1) {
     const result = details[index];
     const [refnr, summary] = summaries[index];
@@ -254,8 +263,11 @@ export async function discoverJobsuche(
     const stableSourceId = `jobsuche:${refnr}`;
     const location = locationText(detail.arbeitsorte ?? realLocations(detail.stellenlokationen), summary.arbeitsort ?? realLocations(summary.stellenlokationen)?.[0]);
     try {
-      const imported = await importVacancy({ text: canonicalText(detail, summary, refnr), sourceUrl, sourceId: stableSourceId, sourceType: "ba_jobsuche_api" }, repository);
-      repository.observeVacancy({ discoveryRunId: runId, jobId: imported.id, stableSourceId, canonicalUrl: sourceUrl, rawHash: imported.sourceHash, observedAt: now() });
+      const imported = await importVacancy(
+        { text: canonicalText(detail, summary, refnr), sourceUrl, sourceId: stableSourceId, sourceType: "ba_jobsuche_api" },
+        repository,
+        { discoveryRunId: runId, observedAt: now() },
+      );
       counters.imported += 1;
       const area = locationActionability(location, source.cities);
       if (area === "out_of_area") {
@@ -293,8 +305,16 @@ export async function discoverJobsuche(
     }
   }
 
-  const status = discoveryStatus(counters);
-  const scope = { planned: scopes.length, completed: completedScopes.size, failed: failedScopes.size };
-  repository.finishDiscoveryRun(runId, { status, counters, diagnostics, finishedAt: now() });
-  return { sourceId: source.id, status, scope, jobs: sortResults(rows), counters, diagnostics };
+    const status = discoveryStatus(counters);
+    const scope = { planned: scopes.length, completed: completedScopes.size, failed: failedScopes.size };
+    batch = { sourceId: source.id, status, scope, jobs: sortResults(rows), counters, diagnostics };
+  } catch (error) {
+    counters.failed += 1;
+    diagnostics.push({ stage: "parse", locator: source.id, code: "connector_exception", message: error instanceof Error ? error.message : String(error), transient: false });
+    const status = discoveryStatus(counters);
+    batch = { sourceId: source.id, status, scope: { planned: scopes.length, completed: completedScopes.size, failed: failedScopes.size }, jobs: sortResults(rows), counters, diagnostics };
+  } finally {
+    repository.finishDiscoveryRun(runId, { status: batch.status, counters, diagnostics, finishedAt: now() });
+  }
+  return batch;
 }

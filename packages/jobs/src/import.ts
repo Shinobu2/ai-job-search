@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import type { StorageRepository, StoredJob } from "../../storage/src/repository";
-import type { ImportRequest, ImportedJob } from "./types";
+import type { DiscoveryImportOptions, ImportRequest, ImportedJob } from "./types";
 
 type SourceInput = {
   rawContent: string;
@@ -140,7 +140,7 @@ function asImported(job: StoredJob, sourceHash: string, reused: boolean, logical
   return { id: job.id, reused, sourceHash, title: job.title, company: job.company, location: job.location, logicalVacancyId, version };
 }
 
-export async function importVacancy(request: ImportRequest, repository: StorageRepository): Promise<ImportedJob> {
+export async function importVacancy(request: ImportRequest, repository: StorageRepository, options: DiscoveryImportOptions = {}): Promise<ImportedJob> {
   const source = await sourceFrom(request);
   const canonicalUrl = request.sourceUrl ? normalizeUrl(request.sourceUrl) : undefined;
   const values = identity(source.extractionText);
@@ -149,11 +149,11 @@ export async function importVacancy(request: ImportRequest, repository: StorageR
   const jobId = `job_${hash(`job:${stableKey}:${source.rawHash}`)}`;
   const existing = repository.readJob(jobId);
   if (existing) {
-    const observed = repository.observeVacancy({ jobId, rawHash: source.rawHash, canonicalUrl, stableSourceId: request.sourceId });
+    const observed = repository.observeVacancy({ jobId, rawHash: source.rawHash, canonicalUrl, stableSourceId: request.sourceId, discoveryRunId: options.discoveryRunId, observedAt: options.observedAt });
     return asImported(existing, source.rawHash, true, observed.logicalVacancyId, observed.version);
   }
 
-  repository.importJob({
+  const input = {
     source: {
       id: sourceId,
       sourceType: source.sourceType,
@@ -173,7 +173,14 @@ export async function importVacancy(request: ImportRequest, repository: StorageR
       rawSnapshotHash: source.rawHash,
       provenance: [{ source_type: "local_import", source_ref: source.sourceLocator ?? "pasted_text" }],
     },
-  });
-  const observed = repository.observeVacancy({ jobId, rawHash: source.rawHash, canonicalUrl, stableSourceId: request.sourceId });
+  };
+  const observation = { jobId, rawHash: source.rawHash, canonicalUrl, stableSourceId: request.sourceId, discoveryRunId: options.discoveryRunId, observedAt: options.observedAt };
+  let observed: { logicalVacancyId: string; version: number };
+  if (options.discoveryRunId) {
+    observed = repository.importJobAndObserve(input, observation);
+  } else {
+    repository.importJob(input);
+    observed = repository.observeVacancy(observation);
+  }
   return { id: jobId, reused: false, sourceHash: source.rawHash, ...values, logicalVacancyId: observed.logicalVacancyId, version: observed.version };
 }

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mapBounded, roundRobinScopes } from "../../packages/search/src/scheduler";
+import { fetchWithRetry, mapBounded, roundRobinScopes } from "../../packages/search/src/scheduler";
 
 test("roundRobinScopes returns the stable keyword-by-city cross product", () => {
   expect(roundRobinScopes(["network", "data center"], ["Frankfurt", "Eschborn"])).toEqual([
@@ -44,4 +44,21 @@ test("mapBounded rejects invalid concurrency and accepts empty input", async () 
   await expect(mapBounded([], 1, async () => 1)).resolves.toEqual([]);
   await expect(mapBounded([1], 0, async (value) => value)).rejects.toThrow("concurrency");
   await expect(mapBounded([1], 6, async (value) => value)).rejects.toThrow("concurrency");
+});
+
+test("fetchWithRetry cancels transient response bodies before retrying", async () => {
+  let attempts = 0;
+  let cancellations = 0;
+  const fetcher = (async () => {
+    attempts += 1;
+    if (attempts === 1) {
+      return new Response(new ReadableStream({ cancel() { cancellations += 1; } }), { status: 503 });
+    }
+    return new Response("ok", { status: 200 });
+  }) as unknown as typeof fetch;
+
+  const response = await fetchWithRetry("https://example.test/read", {}, { sleep: async () => {} }, fetcher);
+  expect(await response.text()).toBe("ok");
+  expect(attempts).toBe(2);
+  expect(cancellations).toBe(1);
 });

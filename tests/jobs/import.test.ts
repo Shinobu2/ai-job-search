@@ -50,7 +50,7 @@ test("imports pasted text and preserves its raw source hash", async () => {
     });
   } finally {
     fixture.db.close();
-    await rm(fixture.directory, { recursive: true, force: true });
+    await rm(fixture.directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
   }
 });
 
@@ -67,7 +67,7 @@ test("imports local text and Markdown files", async () => {
     expect(fromMarkdown).toMatchObject({ reused: false, title: "Data Center Technician Trainee", company: "NorthStar Data GmbH" });
   } finally {
     fixture.db.close();
-    await rm(fixture.directory, { recursive: true, force: true });
+    await rm(fixture.directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -256,5 +256,49 @@ test("unsupported or invalid canonical URLs fall back without colliding with sou
   } finally {
     fixture.db.close();
     await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test("discovery import atomically records new and reused snapshots in their runs", async () => {
+  const db = openDatabase(":memory:");
+  migrate(db);
+  const storage = new StorageRepository(db);
+  try {
+    storage.startDiscoveryRun({ id: "run_new", sourceId: "connector", scopeHash: "scope", startedAt: "2026-07-13T10:00:00.000Z" });
+    const first = await importVacancy(
+      { text: vacancy, sourceId: "connector:atomic" }, storage,
+      { discoveryRunId: "run_new", observedAt: "2026-07-13T10:00:00.000Z" },
+    );
+    storage.finishDiscoveryRun("run_new", { status: "success", finishedAt: "2026-07-13T10:01:00.000Z" });
+
+    storage.startDiscoveryRun({ id: "run_reused", sourceId: "connector", scopeHash: "scope", startedAt: "2026-07-13T11:00:00.000Z" });
+    const reused = await importVacancy(
+      { text: vacancy, sourceId: "connector:atomic" }, storage,
+      { discoveryRunId: "run_reused", observedAt: "2026-07-13T11:00:00.000Z" },
+    );
+
+    expect(reused).toMatchObject({ id: first.id, reused: true, logicalVacancyId: first.logicalVacancyId, version: 1 });
+    expect(db.query("SELECT run_id AS runId, logical_vacancy_id AS vacancyId FROM discovery_observations ORDER BY run_id").all()).toEqual([
+      { runId: "run_new", vacancyId: first.logicalVacancyId },
+      { runId: "run_reused", vacancyId: first.logicalVacancyId },
+    ]);
+  } finally {
+    db.close();
+  }
+});
+
+test("discovery import rolls back a new source and job when run membership observation fails", async () => {
+  const fixture = await repository();
+  try {
+    await expect(importVacancy(
+      { text: vacancy, sourceId: "connector:rollback" }, fixture.repository,
+      { discoveryRunId: "missing_run", observedAt: "2026-07-13T12:00:00.000Z" },
+    )).rejects.toThrow("Unknown discovery run");
+    expect(fixture.db.query("SELECT COUNT(*) AS count FROM job_sources").get()).toEqual({ count: 0 });
+    expect(fixture.db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 0 });
+    expect(fixture.db.query("SELECT COUNT(*) AS count FROM logical_vacancies").get()).toEqual({ count: 0 });
+  } finally {
+    fixture.db.close();
+    await rm(fixture.directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
   }
 });

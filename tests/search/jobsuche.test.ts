@@ -162,6 +162,47 @@ test("Jobsuche treats malformed JSON as a parse failure and does not retry it", 
     expect(batch.jobs).toEqual([]);
     expect(batch.diagnostics).toEqual([expect.objectContaining({ stage: "parse", locator: expect.stringContaining("page=1"), code: "invalid_json", transient: false })]);
     expect(db.query("SELECT status FROM discovery_runs").get()).toEqual({ status: "failed" });
+    expect(db.query("SELECT COUNT(*) AS count FROM discovery_runs WHERE status = 'running'").get()).toEqual({ count: 0 });
+  } finally {
+    globalThis.fetch = originalFetch;
+    db.close();
+  }
+});
+
+test("Jobsuche invalid records are diagnosed, fail all-invalid batches, and make mixed batches partial", async () => {
+  for (const mixed of [false, true]) {
+    const db = openDatabase(":memory:");
+    migrate(db);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes("/pc/v6/jobs?")) return response({ ergebnisliste: mixed ? [{ beruf: "missing reference" }, { referenznummer: "good" }] : [{ beruf: "missing reference" }] });
+      return response({ referenznummer: "good", stellenangebotsTitel: "Technician", firma: "Fixture", arbeitsorte: [{ ort: "Frankfurt" }] });
+    }) as typeof fetch;
+    try {
+      const batch = await discoverJobsuche(source, new StorageRepository(db), workspace as never);
+      expect(batch.status).toBe(mixed ? "partial" : "failed");
+      expect(batch.jobs).toHaveLength(mixed ? 1 : 0);
+      expect(batch.counters.failed).toBe(1);
+      expect(batch.diagnostics).toContainEqual(expect.objectContaining({ stage: "parse", code: "invalid_record" }));
+      expect(db.query("SELECT COUNT(*) AS count FROM discovery_runs WHERE status = 'running'").get()).toEqual({ count: 0 });
+    } finally {
+      globalThis.fetch = originalFetch;
+      db.close();
+    }
+  }
+});
+
+test("Jobsuche empty planned scopes fail diagnostically without network access", async () => {
+  const db = openDatabase(":memory:");
+  migrate(db);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => { throw new Error("must not fetch"); }) as unknown as typeof fetch;
+  try {
+    const batch = await discoverJobsuche({ ...source, cities: [] }, new StorageRepository(db), workspace as never);
+    expect(batch.status).toBe("failed");
+    expect(batch.diagnostics).toEqual([expect.objectContaining({ code: "empty_scope" })]);
+    expect(db.query("SELECT status FROM discovery_runs").get()).toEqual({ status: "failed" });
   } finally {
     globalThis.fetch = originalFetch;
     db.close();

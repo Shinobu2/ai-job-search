@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { openDatabase } from "../../packages/storage/src/database";
 import { migrate } from "../../packages/storage/src/migrate";
 import { StorageRepository } from "../../packages/storage/src/repository";
@@ -271,9 +274,114 @@ test("FreeHire treats malformed JSON as a parse failure instead of an empty succ
     expect(batch.counters.failed).toBe(1);
     expect(batch.diagnostics).toEqual([expect.objectContaining({ stage: "parse", code: "invalid_json", transient: false })]);
     expect(db.query("SELECT status FROM discovery_runs").get()).toEqual({ status: "failed" });
+    expect(db.query("SELECT COUNT(*) AS count FROM discovery_runs WHERE status = 'running'").get()).toEqual({ count: 0 });
   } finally {
     globalThis.fetch = originalFetch;
     db.close();
+  }
+});
+
+test("FreeHire thrown malformed envelopes finish diagnostically without a running row", async () => {
+  const db = openDatabase(":memory:");
+  migrate(db);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => response({ data: { not: "a list" } })) as unknown as typeof fetch;
+  try {
+    const batch = await discoverFreehire({ ...source, cities: ["Frankfurt"] }, new StorageRepository(db), workspace as never);
+    expect(batch.status).toBe("failed");
+    expect(batch.diagnostics).toEqual([expect.objectContaining({ stage: "parse", code: "invalid_envelope" })]);
+    expect(db.query("SELECT COUNT(*) AS count FROM discovery_runs WHERE status = 'running'").get()).toEqual({ count: 0 });
+  } finally {
+    globalThis.fetch = originalFetch;
+    db.close();
+  }
+});
+
+test("FreeHire invalid records are diagnosed, fail all-invalid batches, and make mixed batches partial", async () => {
+  for (const mixed of [false, true]) {
+    const db = openDatabase(":memory:");
+    migrate(db);
+    const originalFetch = globalThis.fetch;
+    const good = freehireJob("valid-record");
+    globalThis.fetch = (async (input: string | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/search")) return response({ data: mixed ? [{ title: "missing slug" }, good] : [{ title: "missing slug" }] });
+      return response({ data: good });
+    }) as typeof fetch;
+    try {
+      const batch = await discoverFreehire({ ...source, cities: ["Frankfurt"] }, new StorageRepository(db), workspace as never);
+      expect(batch.status).toBe(mixed ? "partial" : "failed");
+      expect(batch.jobs).toHaveLength(mixed ? 1 : 0);
+      expect(batch.counters.failed).toBe(1);
+      expect(batch.diagnostics).toContainEqual(expect.objectContaining({ stage: "parse", code: "invalid_record" }));
+      expect(db.query("SELECT COUNT(*) AS count FROM discovery_runs WHERE status = 'running'").get()).toEqual({ count: 0 });
+    } finally {
+      globalThis.fetch = originalFetch;
+      db.close();
+    }
+  }
+});
+
+test("FreeHire empty planned scopes fail diagnostically without network access", async () => {
+  const db = openDatabase(":memory:");
+  migrate(db);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => { throw new Error("must not fetch"); }) as unknown as typeof fetch;
+  try {
+    const batch = await discoverFreehire({ ...source, keywords: [] }, new StorageRepository(db), workspace as never);
+    expect(batch.status).toBe("failed");
+    expect(batch.diagnostics).toEqual([expect.objectContaining({ code: "empty_scope" })]);
+    expect(db.query("SELECT status FROM discovery_runs").get()).toEqual({ status: "failed" });
+  } finally {
+    globalThis.fetch = originalFetch;
+    db.close();
+  }
+});
+
+test("FreeHire import or post-import evaluation exceptions finish failed or partial runs", async () => {
+  for (const stage of ["import", "evaluation"] as const) {
+    const db = openDatabase(":memory:");
+    migrate(db);
+    const repository = new StorageRepository(db);
+    const originalFetch = globalThis.fetch;
+    const fixture = freehireJob(stage);
+    globalThis.fetch = (async (input: string | URL) => response({ data: String(input).includes("/search?") ? [fixture] : fixture })) as typeof fetch;
+    if (stage === "import") repository.importJobAndObserve = (() => { throw new Error("fixture import/observation failure"); }) as typeof repository.importJobAndObserve;
+    else repository.persistEvaluation = (() => { throw new Error("fixture evaluation failure"); }) as typeof repository.persistEvaluation;
+    try {
+      const batch = await discoverFreehire({ ...source, cities: ["Frankfurt"] }, repository, workspace as never);
+      expect(batch.status).toBe(stage === "import" ? "failed" : "partial");
+      expect(batch.diagnostics).toContainEqual(expect.objectContaining({ code: "processing_failed" }));
+      expect(db.query("SELECT COUNT(*) AS count FROM discovery_runs WHERE status = 'running'").get()).toEqual({ count: 0 });
+      expect(db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: stage === "import" ? 0 : 1 });
+    } finally {
+      globalThis.fetch = originalFetch;
+      db.close();
+    }
+  }
+});
+
+test("FreeHire connectors sharing a database allocate distinct finished runs at the same injected timestamp", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "career-control-room-run-allocation-"));
+  const path = join(directory, "control-room.sqlite");
+  const firstDb = openDatabase(path);
+  migrate(firstDb);
+  const secondDb = openDatabase(path);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => response({ data: [] })) as unknown as typeof fetch;
+  try {
+    const options = { now: () => "2026-07-13T15:00:00.000Z" };
+    await discoverFreehire({ ...source, cities: ["Frankfurt"] }, new StorageRepository(firstDb), workspace as never, options);
+    await discoverFreehire({ ...source, cities: ["Frankfurt"] }, new StorageRepository(secondDb), workspace as never, options);
+    const runs = firstDb.query("SELECT id, status FROM discovery_runs ORDER BY id").all() as Array<{ id: string; status: string }>;
+    expect(runs).toHaveLength(2);
+    expect(new Set(runs.map((run) => run.id)).size).toBe(2);
+    expect(runs.every((run) => run.status !== "running")).toBe(true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    secondDb.close();
+    firstDb.close();
+    await rm(directory, { recursive: true, force: true });
   }
 });
 

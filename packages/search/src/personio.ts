@@ -21,12 +21,28 @@ export type PersonioDiscoveryOptions = DiscoveryOptions & { fetcher?: typeof fet
 type XmlText = { kind: "text"; value: string; cdata: boolean };
 type XmlNode = { kind: "node"; name: string; children: Array<XmlNode | XmlText> };
 
-function decodeEntities(value: string): string {
-  return value.replace(/&(?:amp|lt|gt|quot|apos|nbsp);|&#(\d+);|&#x([\da-f]+);/gi, (entity, decimal?: string, hexadecimal?: string) => {
-    if (decimal) return String.fromCodePoint(Number(decimal));
-    if (hexadecimal) return String.fromCodePoint(Number.parseInt(hexadecimal, 16));
-    return ({ "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"", "&apos;": "'", "&nbsp;": " " } as Record<string, string>)[entity.toLowerCase()] ?? entity;
-  });
+function decodeEntities(value: string, strict = true): string {
+  const named: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: " " };
+  let output = "";
+  let cursor = 0;
+  for (const match of value.matchAll(/&(#\d+|#x[\da-f]+|[A-Za-z][\w.-]*);/g)) {
+    const index = match.index ?? 0;
+    const prefix = value.slice(cursor, index);
+    if (strict && prefix.includes("&")) throw new Error("Malformed XML entity reference");
+    output += prefix;
+    const token = match[1];
+    if (token.startsWith("#x")) output += String.fromCodePoint(Number.parseInt(token.slice(2), 16));
+    else if (token.startsWith("#")) output += String.fromCodePoint(Number(token.slice(1)));
+    else {
+      const decoded = named[token];
+      if (decoded === undefined) throw new Error(`Unknown XML entity: &${token};`);
+      output += decoded;
+    }
+    cursor = index + match[0].length;
+  }
+  const tail = value.slice(cursor);
+  if (strict && tail.includes("&")) throw new Error("Malformed XML entity reference");
+  return output + tail;
 }
 
 function parseXml(xml: string): XmlNode {
@@ -65,12 +81,12 @@ function parseXml(xml: string): XmlNode {
     const token = xml.slice(cursor + 1, end).trim();
     if (!token || token.startsWith("!")) throw new Error("Malformed XML: unsupported declaration");
     if (token.startsWith("/")) {
-      const name = token.slice(1).trim().toLowerCase();
+      const name = token.slice(1).trim();
       const current = stack.pop();
       if (!current || current === document || current.name !== name) throw new Error(`Malformed XML: unexpected closing tag ${name}`);
     } else {
       const selfClosing = token.endsWith("/");
-      const name = token.replace(/\/$/, "").trim().split(/\s+/, 1)[0]?.toLowerCase();
+      const name = token.replace(/\/$/, "").trim().split(/\s+/, 1)[0];
       if (!name || !/^[a-z_][\w:.-]*$/i.test(name)) throw new Error("Malformed XML: invalid tag name");
       const node: XmlNode = { kind: "node", name, children: [] };
       stack.at(-1)?.children.push(node);
@@ -91,11 +107,11 @@ function descendants(node: XmlNode, name: string): XmlNode[] {
 }
 
 function fragmentText(value: string): string {
-  if (!value.includes("<")) return decodeEntities(value);
+  if (!value.includes("<")) return decodeEntities(value, false);
   try {
     return nodeText(parseXml(`<fragment>${value}</fragment>`));
   } catch {
-    return decodeEntities(value);
+    return decodeEntities(value, false);
   }
 }
 
@@ -115,11 +131,11 @@ export function parsePersonioXml(xml: string): PersonioJob[] {
     const titleNode = firstDirect(position, "name");
     const id = idNode ? nodeText(idNode) : "";
     const title = titleNode ? nodeText(titleNode) : "";
-    if (!id || !title) return [];
+    if (!id || !title) throw new Error("Malformed XML: position requires id and name");
     const locations = position.children
       .filter((child): child is XmlNode => child.kind === "node" && child.name === "office")
       .map(nodeText).filter(Boolean);
-    const description = descendants(position, "jobdescription")
+    const description = descendants(position, "jobDescription")
       .flatMap((entry) => {
         const value = firstDirect(entry, "value");
         return value ? [nodeText(value)] : [];
@@ -184,23 +200,33 @@ export async function discoverPersonioEmployer(
   const startedAt = now();
   const sourceId = `personio:${employer.id}`;
   const normalizedScope = { employer: employer.id.toLowerCase(), cities: employer.cities.map((city) => city.trim().toLowerCase()), endpoint: endpoint.toString() };
-  const { runId, scopeHash } = discoveryRunIdentity(sourceId, normalizedScope, startedAt);
-  repository.startDiscoveryRun({ id: runId, sourceId, scopeHash, startedAt });
+  const identity = discoveryRunIdentity(sourceId, normalizedScope, startedAt);
+  const runId = repository.startDiscoveryRunAllocated({ id: identity.runId, sourceId, scopeHash: identity.scopeHash, startedAt }).id;
 
-  const read = await readPersonioEmployer(employer, options.fetcher ?? fetch, options);
-  const counters = { ...read.counters };
-  const diagnostics = [...read.diagnostics];
+  const counters = emptyCounters();
+  const diagnostics: SourceDiagnostic[] = [];
   const rows: DiscoveryBatch["jobs"] = [];
-  const limit = Math.max(0, Math.min(options.maxResults ?? 25, 25));
-  const selected = read.jobs.slice(0, limit);
-  counters.skipped += Math.max(0, read.jobs.length - selected.length);
+  let scope: DiscoveryScopeSummary = { planned: 1, completed: 0, failed: 1 };
+  let batch!: DiscoveryBatch;
 
-  for (const job of selected) {
+  try {
+    const read = await readPersonioEmployer(employer, options.fetcher ?? fetch, options);
+    Object.assign(counters, read.counters);
+    diagnostics.push(...read.diagnostics);
+    scope = read.scope;
+    const limit = Math.max(0, Math.min(options.maxResults ?? 25, 25));
+    const selected = read.jobs.slice(0, limit);
+    counters.skipped += Math.max(0, read.jobs.length - selected.length);
+
+    for (const job of selected) {
     const stableSourceId = `personio:${employer.id}:${job.id}`;
     const sourceUrl = new URL(`/job/${encodeURIComponent(job.id)}`, endpoint.origin).toString();
     try {
-      const imported = await importVacancy({ text: canonicalText(job, employer), sourceId: stableSourceId, sourceUrl, sourceType: "personio_public_xml" }, repository);
-      repository.observeVacancy({ discoveryRunId: runId, jobId: imported.id, stableSourceId, canonicalUrl: sourceUrl, rawHash: imported.sourceHash, observedAt: now() });
+      const imported = await importVacancy(
+        { text: canonicalText(job, employer), sourceId: stableSourceId, sourceUrl, sourceType: "personio_public_xml" },
+        repository,
+        { discoveryRunId: runId, observedAt: now() },
+      );
       counters.imported += 1;
       const area = locationActionability(job.locations.join(", ") || null, employer.cities);
       if (area === "out_of_area") {
@@ -236,9 +262,17 @@ export async function discoverPersonioEmployer(
       counters.failed += 1;
       diagnostics.push({ stage: "parse", locator: stableSourceId, code: "processing_failed", message: error instanceof Error ? error.message : String(error), transient: false });
     }
-  }
+    }
 
-  const status = discoveryStatus(counters);
-  repository.finishDiscoveryRun(runId, { status, counters, diagnostics, finishedAt: now() });
-  return { sourceId, status, scope: read.scope, jobs: rows, counters, diagnostics };
+    const status = discoveryStatus(counters);
+    batch = { sourceId, status, scope, jobs: rows, counters, diagnostics };
+  } catch (error) {
+    counters.failed += 1;
+    diagnostics.push({ stage: "parse", locator: sourceId, code: "connector_exception", message: error instanceof Error ? error.message : String(error), transient: false });
+    const status = discoveryStatus(counters);
+    batch = { sourceId, status, scope, jobs: rows, counters, diagnostics };
+  } finally {
+    repository.finishDiscoveryRun(runId, { status: batch.status, counters, diagnostics, finishedAt: now() });
+  }
+  return batch;
 }

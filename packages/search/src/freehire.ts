@@ -122,8 +122,8 @@ export async function discoverFreehire(
 
   const now = options.now ?? (() => new Date().toISOString());
   const startedAt = now();
-  const { runId, scopeHash } = discoveryRunIdentity(source.id, normalizedScope(source), startedAt);
-  repository.startDiscoveryRun({ id: runId, sourceId: source.id, scopeHash, startedAt });
+  const identity = discoveryRunIdentity(source.id, normalizedScope(source), startedAt);
+  const runId = repository.startDiscoveryRunAllocated({ id: identity.runId, sourceId: source.id, scopeHash: identity.scopeHash, startedAt }).id;
 
   const counters = emptyCounters();
   const diagnostics: SourceDiagnostic[] = [];
@@ -132,8 +132,15 @@ export async function discoverFreehire(
   const failedScopes = new Set<number>();
   const completedScopes = new Set<number>();
   const seen = new Map<string, FreehireJob>();
+  const rows: DiscoveredJob[] = [];
+  let batch!: DiscoveryBatch;
 
-  for (let page = 1; page <= source.max_pages && active.some(Boolean); page += 1) {
+  try {
+    if (scopes.length === 0) {
+      counters.failed += 1;
+      diagnostics.push({ stage: "search", locator: source.id, code: "empty_scope", message: "FreeHire discovery requires at least one keyword and city scope", transient: false });
+    }
+    for (let page = 1; page <= source.max_pages && active.some(Boolean); page += 1) {
     const pageScopes = scopes.map((scope, index) => ({ scope, index })).filter(({ index }) => active[index]);
     const settled = await mapBounded(pageScopes, CONCURRENCY, async ({ scope }) => {
       const url = searchUrl(source, scope.keyword, scope.city, page);
@@ -150,7 +157,10 @@ export async function discoverFreehire(
         return;
       }
       for (const job of result.value) {
-        if (job?.public_slug && !seen.has(job.public_slug)) seen.set(job.public_slug, job);
+        if (!job?.public_slug) {
+          counters.failed += 1;
+          diagnostics.push({ stage: "parse", locator: searchUrl(source, scope.keyword, scope.city, page), code: "invalid_record", message: "FreeHire search record is missing public_slug", transient: false });
+        } else if (!seen.has(job.public_slug)) seen.set(job.public_slug, job);
       }
       if (result.value.length < source.page_size || page === source.max_pages) {
         active[index] = false;
@@ -161,7 +171,7 @@ export async function discoverFreehire(
       for (const { index } of pageScopes) if (!failedScopes.has(index)) completedScopes.add(index);
       break;
     }
-  }
+    }
 
   const summaries = [...seen.values()].slice(0, MAX_DISCOVERY_RESULTS);
   counters.detailed = summaries.length;
@@ -170,7 +180,6 @@ export async function discoverFreehire(
     return detailEnvelope(await readJson<Envelope<FreehireJob>>(url, options, "FreeHire"));
   });
 
-  const rows: DiscoveredJob[] = [];
   for (let index = 0; index < details.length; index += 1) {
     const result = details[index];
     const summary = summaries[index];
@@ -190,15 +199,7 @@ export async function discoverFreehire(
     try {
       const imported = await importVacancy({
         text: canonicalText(detail), sourceUrl: detail.url, sourceId: stableSourceId, sourceType: "freehire_public_api",
-      }, repository);
-      repository.observeVacancy({
-        discoveryRunId: runId,
-        jobId: imported.id,
-        stableSourceId,
-        canonicalUrl: detail.url,
-        rawHash: imported.sourceHash,
-        observedAt: now(),
-      });
+      }, repository, { discoveryRunId: runId, observedAt: now() });
       counters.imported += 1;
       const area = locationActionability(detail.location, source.cities);
       if (area === "out_of_area") {
@@ -236,8 +237,16 @@ export async function discoverFreehire(
     }
   }
 
-  const status = discoveryStatus(counters);
-  const scope = { planned: scopes.length, completed: completedScopes.size, failed: failedScopes.size };
-  repository.finishDiscoveryRun(runId, { status, counters, diagnostics, finishedAt: now() });
-  return { sourceId: source.id, status, scope, jobs: sortResults(rows), counters, diagnostics };
+    const status = discoveryStatus(counters);
+    const scope = { planned: scopes.length, completed: completedScopes.size, failed: failedScopes.size };
+    batch = { sourceId: source.id, status, scope, jobs: sortResults(rows), counters, diagnostics };
+  } catch (error) {
+    counters.failed += 1;
+    diagnostics.push({ stage: "parse", locator: source.id, code: "connector_exception", message: error instanceof Error ? error.message : String(error), transient: false });
+    const status = discoveryStatus(counters);
+    batch = { sourceId: source.id, status, scope: { planned: scopes.length, completed: completedScopes.size, failed: failedScopes.size }, jobs: sortResults(rows), counters, diagnostics };
+  } finally {
+    repository.finishDiscoveryRun(runId, { status: batch.status, counters, diagnostics, finishedAt: now() });
+  }
+  return batch;
 }

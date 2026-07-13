@@ -321,3 +321,26 @@ test("misses remain isolated per source and scope membership", async () => {
     fixture.db.close();
   }
 });
+
+test("discovery run allocation uses SQLite to resolve identical deterministic IDs across repository contexts", async () => {
+  const fixture = await repository();
+  const secondDb = openDatabase(fixture.path);
+  try {
+    const secondRepository = new StorageRepository(secondDb);
+    const input = { id: "deterministic_run", sourceId: "freehire", scopeHash: "scope", startedAt: "2026-07-13T10:00:00.000Z" };
+    const first = fixture.repository.startDiscoveryRunAllocated(input);
+    const second = secondRepository.startDiscoveryRunAllocated(input);
+    expect(first.id).toBe("deterministic_run");
+    expect(second.id).toBe("deterministic_run_1");
+    fixture.repository.finishDiscoveryRun(first.id, { status: "success", finishedAt: "2026-07-13T10:01:00.000Z" });
+    secondRepository.finishDiscoveryRun(second.id, { status: "failed", finishedAt: "2026-07-13T10:01:00.000Z" });
+    expect(fixture.db.query("SELECT id, status FROM discovery_runs ORDER BY id").all()).toEqual([
+      { id: "deterministic_run", status: "success" },
+      { id: "deterministic_run_1", status: "failed" },
+    ]);
+  } finally {
+    secondDb.close();
+    fixture.db.close();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});

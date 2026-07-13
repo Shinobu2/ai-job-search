@@ -18,7 +18,7 @@ import { discoverFreehire, type FreehireSourceConfig } from "../packages/search/
 import { discoverJobsuche, type JobsucheSourceConfig } from "../packages/search/src/jobsuche";
 import { loadEmployerRegistry } from "../packages/search/src/employer-registry";
 import { discoverPersonioEmployer } from "../packages/search/src/personio";
-import type { DiscoveryCounters, SourceDiagnostic } from "../packages/search/src/types";
+import { isActionableDiscoveryJob, type DiscoveryCounters, type SourceDiagnostic } from "../packages/search/src/types";
 import { generateDocumentPacket, hashEvidenceSnapshot } from "../packages/documents/src/generate";
 
 type JobFlags = { id?: string; file?: string; text?: string; status?: string; next?: string; note?: string; confirm?: string };
@@ -131,7 +131,7 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
           const batch = await discoverPersonioEmployer(employer, repository, workspace, { maxResults: 25 - processed });
           processed += batch.jobs.length;
           printDiscoveryDiagnostics(`Personio ${employer.id}`, batch.counters, batch.diagnostics);
-          for (const job of batch.jobs.filter((entry) => entry.actionable && entry.evaluation)) {
+          for (const job of batch.jobs.filter(isActionableDiscoveryJob)) {
             console.log(renderResultCard({ ...job.evaluation!, title: job.title, company: job.company }));
             console.log(`Source: Personio ${job.sourceId} — ${job.sourceUrl}`);
             console.log(`Import: ${job.reused ? "reused" : "created"}\n`);
@@ -162,8 +162,7 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
       ? await discoverJobsuche(source, repository, workspace)
       : await discoverFreehire(source, repository, workspace);
     const sourceLabel = jobsuche ? "Jobsuche" : "FreeHire";
-    const actionable = batch.jobs.filter((result) => result.actionable && result.evaluation && result.evaluation.archetype !== "X"
-      && !result.evaluation.gates.some((gate) => gate.status === "BLOCKED"));
+    const actionable = batch.jobs.filter(isActionableDiscoveryJob);
     const displayed = actionable.slice(0, 10);
     console.log(`${sourceLabel} discovered: ${batch.jobs.length} | actionable shortlist: ${actionable.length} | showing: ${displayed.length}`);
     printDiscoveryDiagnostics(sourceLabel, batch.counters, batch.diagnostics);
