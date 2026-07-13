@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { cp, mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -85,7 +84,19 @@ test("proves the isolated synthetic MVP lifecycle through public CLI commands", 
       mappings: Array<{ status: string; evidenceIds: string[] }>;
     }>(await cli(directory, "job", "evaluate", "--id", imported.id));
     expect(evaluated).toMatchObject({ jobId: imported.id, verdict: "PROCEED" });
-    expect(evaluated.gates.some((gate) => gate.status === "BLOCKED" || (gate.critical && gate.status === "VERIFY"))).toBe(false);
+    expect(Object.fromEntries(evaluated.gates.map((gate) => [gate.id, gate.status]))).toEqual({
+      archetype: "PASS",
+      shift: "PASS",
+      transport: "PASS",
+      physical: "PASS",
+      scope: "PASS",
+      facilities: "PASS",
+      language: "PASS",
+      experience: "PASS",
+      salary: "PASS",
+      deadline: "PASS",
+    });
+    expect(evaluated.gates.filter((gate) => gate.critical).every((gate) => gate.status === "PASS")).toBe(true);
     expect(evaluated.mappings.flatMap((mapping) => mapping.evidenceIds)).toContain("SYNTHETIC_UNREVIEWED_SERVER");
 
     const exported = outputJson<{ jobId: string; fingerprint: string }>(await cli(directory, "job", "export", "--id", imported.id));
@@ -141,16 +152,12 @@ test("proves the isolated synthetic MVP lifecycle through public CLI commands", 
       status: "user_submitted",
       document_dir: generated.directory,
     })]);
-    const database = new Database(join(directory, "workspace", "control-room.sqlite"), { readonly: true });
-    try {
-      expect(database.query("SELECT status, actor FROM application_events WHERE job_id = ? ORDER BY id").all(imported.id)).toEqual([
-        { status: "shortlisted", actor: "user" },
-        { status: "ready_for_review", actor: "user" },
-        { status: "user_submitted", actor: "user_confirmed_cli" },
-      ]);
-    } finally {
-      database.close();
-    }
+    const history = outputJson<Array<{ status: string; actor: string }>>(await cli(directory, "applications", "history", "--id", imported.id));
+    expect(history.map(({ status, actor }) => ({ status, actor }))).toEqual([
+      { status: "shortlisted", actor: "user" },
+      { status: "ready_for_review", actor: "user" },
+      { status: "user_submitted", actor: "user_confirmed_cli" },
+    ]);
 
     const report = (await cli(directory, "report", "daily")).stdout;
     expect(report).toContain("Imported today: 1 | Evaluated today: 1 | Application updates today: 3");
@@ -160,8 +167,11 @@ test("proves the isolated synthetic MVP lifecycle through public CLI commands", 
 
     const capabilities = outputJson<{ configured_mode: string; effective_mode: string }>(await cli(directory, "capabilities"));
     expect(capabilities).toMatchObject({ configured_mode: "supervised_auto", effective_mode: "prepare_only" });
-    expect(await snapshotWorkspace(realWorkspace)).toEqual(realWorkspaceBefore);
   } finally {
-    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
+    try {
+      expect(await snapshotWorkspace(realWorkspace)).toEqual(realWorkspaceBefore);
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
+    }
   }
 });

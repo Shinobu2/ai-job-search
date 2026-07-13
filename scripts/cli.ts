@@ -255,6 +255,12 @@ async function runApplications(root: string, command: string | undefined, argume
       console.log(JSON.stringify(repository.listApplications(), null, 2));
       return;
     }
+    if (command === "history") {
+      requireOnly(flags, ["id"], "applications history");
+      if (!flags.id) throw new Error("applications history requires --id");
+      console.log(JSON.stringify(repository.listApplicationEvents(flags.id), null, 2));
+      return;
+    }
     if (command === "set") {
       requireOnly(flags, ["id", "status", "next", "note", "confirm"], "applications set");
       const statuses = ["shortlisted", "ready_for_review", "user_submitted", "interview", "offer", "rejected", "withdrawn"] as const;
@@ -264,7 +270,7 @@ async function runApplications(root: string, command: string | undefined, argume
       console.log(JSON.stringify(repository.setApplicationStatus(flags.id, status, { nextAction: flags.next, note: flags.note, actor: explicitlyConfirmed ? "user_confirmed_cli" : "user", confirmed: explicitlyConfirmed }), null, 2));
       return;
     }
-    throw new Error("Usage: applications <set|list>");
+    throw new Error("Usage: applications <set|list|history>");
   } finally { db.close(); }
 }
 

@@ -24,6 +24,10 @@ test("application CLI delegates transitions and rejects forged document metadata
     const id = (JSON.parse(imported.stdout) as { id: string }).id;
     expect((await run(directory, ["applications", "set", "--id", id, "--status", "user_submitted", "--confirm", "yes"])).stderr).toContain("requires current status ready_for_review");
     expect((await run(directory, ["applications", "set", "--id", id, "--status", "shortlisted"])).code).toBe(0);
+    const history = await run(directory, ["applications", "history", "--id", id]);
+    expect(history.code).toBe(0);
+    expect(JSON.parse(history.stdout)).toEqual([expect.objectContaining({ job_id: id, status: "shortlisted", actor: "user" })]);
+    expect((await run(directory, ["applications", "history"])).stderr).toContain("applications history requires --id");
     const packet = join(directory, "workspace", "documents", id);
     await mkdir(packet, { recursive: true });
     await writeFile(join(packet, "metadata.json"), JSON.stringify({ ready_for_submission: true }));

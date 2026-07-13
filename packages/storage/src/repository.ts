@@ -73,6 +73,7 @@ export interface EvidenceMappingInput {
 
 export type ApplicationStatus = "shortlisted" | "ready_for_review" | "user_submitted" | "interview" | "offer" | "rejected" | "withdrawn";
 export type ApplicationRecord = { job_id: string; status: ApplicationStatus; next_action: string | null; document_dir: string | null; created_at: string; updated_at: string };
+export type ApplicationEventRecord = { id: number; job_id: string; status: ApplicationStatus; actor: string; note: string | null; created_at: string };
 export type ApplicationOptions = { nextAction?: string; documentDir?: string; actor?: string; note?: string; confirmed?: boolean };
 export type DocumentPacketInput = {
   id: string;
@@ -388,6 +389,10 @@ export class StorageRepository {
 
   listApplications(): ApplicationRecord[] {
     return this.db.query("SELECT * FROM applications ORDER BY updated_at DESC, job_id").all() as ApplicationRecord[];
+  }
+
+  listApplicationEvents(jobId: string): ApplicationEventRecord[] {
+    return this.db.query("SELECT id, job_id, status, actor, note, created_at FROM application_events WHERE job_id = ? ORDER BY id").all(jobId) as ApplicationEventRecord[];
   }
 
   listEvaluatedJobIds(limit = 20): string[] {

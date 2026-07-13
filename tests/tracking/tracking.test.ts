@@ -87,6 +87,13 @@ test("enforces the repository application state machine and verifies current art
     repository.setApplicationStatus("j", "interview", { confirmed: true });
     repository.setApplicationStatus("j", "offer", { confirmed: true });
     expect(repository.listApplications()[0]).toMatchObject({ job_id: "j", status: "offer", next_action: "Review documents", document_dir: files.relativeDirectory });
+    expect(repository.listApplicationEvents("j").map(({ status, actor, note }) => ({ status, actor, note }))).toEqual([
+      { status: "shortlisted", actor: "user", note: null },
+      { status: "ready_for_review", actor: "user", note: null },
+      { status: "user_submitted", actor: "user", note: "Confirmed by user" },
+      { status: "interview", actor: "user", note: null },
+      { status: "offer", actor: "user", note: null },
+    ]);
     expect(db.query("SELECT COUNT(*) AS count FROM application_events").get()).toEqual({ count: 5 });
   } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
 });
