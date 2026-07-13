@@ -3,11 +3,13 @@ import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { validateWorkspaceFile } from "../../packages/core/src/workspace";
+import { openDatabase } from "../../packages/storage/src/database";
 
 const root = resolve(import.meta.dir, "../..");
 const cli = join(root, "scripts", "cli.ts");
 const freehireFetchFixture = join(root, "tests", "search", "freehire-fetch.fixture.ts");
 const jobsucheFetchFixture = join(root, "tests", "search", "jobsuche-fetch.fixture.ts");
+const personioFetchFixture = join(root, "tests", "search", "personio-fetch.fixture.ts");
 
 function payload(job: unknown) {
   return new Response(JSON.stringify({ data: job }), { headers: { "content-type": "application/json" } });
@@ -32,13 +34,17 @@ test("search freehire imports, evaluates, and prints a local shortlist without s
   await cp(join(root, "workspace.example"), join(directory, "workspace"), { recursive: true });
   const job = { public_slug: "fixture-dct", title: "Data Center Technician", company: "Fixture DC", location: "Frankfurt, Germany", url: "https://jobs.example/fixture-dct", description: "Skills: hardware replacement", skills: ["Hardware"], regions: ["eu"], countries: ["DE"], cities: ["Frankfurt"], posted_at: "2026-07-12", created_at: "2026-07-12", enrichment: {} };
   const excluded = { ...job, public_slug: "fixture-warehouse", title: "Warehouse Operative", url: "https://jobs.example/fixture-warehouse", description: "Warehouse conveyor work", skills: [] };
+  const outside = { ...job, public_slug: "fixture-munich", title: "Munich Technician", location: "Munich, Germany", url: "https://jobs.example/fixture-munich", cities: ["Munich"] };
+  const failed = { ...job, public_slug: "fixture-failed", title: "Unavailable detail", url: "https://jobs.example/fixture-failed" };
   const server = Bun.serve({
     port: 0,
     fetch(request) {
       const path = new URL(request.url).pathname;
-      if (path.endsWith("/search")) return payload([job, excluded]);
+      if (path.endsWith("/search")) return payload([job, excluded, outside, failed]);
       if (path.endsWith("/fixture-dct")) return payload(job);
       if (path.endsWith("/fixture-warehouse")) return payload(excluded);
+      if (path.endsWith("/fixture-munich")) return payload(outside);
+      if (path.endsWith("/fixture-failed")) return new Response("unavailable", { status: 503 });
       return new Response("not found", { status: 404 });
     },
   });
@@ -51,10 +57,16 @@ test("search freehire imports, evaluates, and prints a local shortlist without s
     expect(await child.exited).toBe(0);
     expect(await new Response(child.stderr).text()).toBe("");
     const stdout = await new Response(child.stdout).text();
-    expect(stdout).toContain("FreeHire discovered: 2 | actionable shortlist: 1");
+    expect(stdout).toContain("FreeHire discovered: 3 | actionable shortlist: 1");
+    expect(stdout).toContain("Counters: searched=28 detailed=4 imported=3 skipped=1 failed=1");
+    expect(stdout).toContain("[detail] http_503 fixture-failed");
     expect(stdout).toContain("Data Center Technician");
     expect(stdout).not.toContain("Warehouse Operative");
+    expect(stdout).not.toContain("Munich Technician");
     expect(stdout).toContain("No application was submitted.");
+    const db = openDatabase(join(directory, "workspace", "control-room.sqlite"));
+    try { expect(db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 3 }); }
+    finally { db.close(); }
   } finally {
     server.stop(true);
     await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
@@ -85,8 +97,32 @@ test("search jobsuche imports, evaluates, and prints a local shortlist without s
     expect(await new Response(child.stderr).text()).toBe("");
     const stdout = await new Response(child.stdout).text();
     expect(stdout).toContain("Jobsuche discovered: 1 | actionable shortlist: 1 | showing: 1");
+    expect(stdout).toContain("Counters: searched=1 detailed=1 imported=1 skipped=0 failed=0");
     expect(stdout).toContain("Data Center Technician");
     expect(stdout).toContain("No application was submitted.");
+  } finally {
+    server.stop(true);
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
+  }
+});
+
+test("search employers reports a source outage and still prints the no-submit guarantee", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "career-control-room-personio-cli-"));
+  await cp(join(root, "workspace.example"), join(directory, "workspace"), { recursive: true });
+  const server = Bun.serve({ port: 0, fetch: () => new Response("unavailable", { status: 503 }) });
+  try {
+    const child = Bun.spawn([process.execPath, "--preload", personioFetchFixture, cli, "search", "employers"], {
+      cwd: directory,
+      env: { ...process.env, PERSONIO_TEST_ENDPOINT: server.url.toString() },
+      stdout: "pipe", stderr: "pipe",
+    });
+    expect(await child.exited).toBe(0);
+    expect(await new Response(child.stderr).text()).toBe("");
+    const stdout = await new Response(child.stdout).text();
+    expect(stdout).toContain("Personio maincubes diagnostics: 1");
+    expect(stdout).toContain("[search] http_503 maincubes");
+    expect(stdout).toContain("Employer shortlist: 0");
+    expect(stdout.trim().endsWith("No application was submitted.")).toBe(true);
   } finally {
     server.stop(true);
     await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });

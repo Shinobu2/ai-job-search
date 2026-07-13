@@ -17,7 +17,8 @@ import { StorageRepository, type ApplicationStatus, type DocumentPacketRecord, t
 import { discoverFreehire, type FreehireSourceConfig } from "../packages/search/src/freehire";
 import { discoverJobsuche, type JobsucheSourceConfig } from "../packages/search/src/jobsuche";
 import { loadEmployerRegistry } from "../packages/search/src/employer-registry";
-import { readPersonioEmployer } from "../packages/search/src/personio";
+import { discoverPersonioEmployer } from "../packages/search/src/personio";
+import type { DiscoveryCounters, SourceDiagnostic } from "../packages/search/src/types";
 import { generateDocumentPacket, hashEvidenceSnapshot } from "../packages/documents/src/generate";
 
 type JobFlags = { id?: string; file?: string; text?: string; status?: string; next?: string; note?: string; confirm?: string };
@@ -123,21 +124,24 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
     const { db, repository } = openRepository(root);
     try {
       let count = 0;
+      let processed = 0;
       for (const employer of registry.employers.filter((entry) => entry.enabled && entry.policy === "public_ats_endpoint" && entry.ats === "personio")) {
-        for (const job of (await readPersonioEmployer(employer)).filter((entry) => !entry.location || employer.cities.some((city) => entry.location?.toLowerCase().includes(city.toLowerCase()))).slice(0, 25 - count)) {
-          const sourceUrl = new URL(`/job/${encodeURIComponent(job.id)}`, new URL(employer.career_url).origin).toString();
-          const imported = await importVacancy({
-            text: [`# ${job.title}`, `Company: ${employer.name}`, `Location: ${job.location ?? "unknown"}`, "Description:", job.description || "unknown"].join("\n"),
-            sourceId: `personio:${employer.id}:${job.id}`, sourceUrl, sourceType: "personio_public_xml",
-          }, repository);
-          const result = await evaluateJob(root, repository, imported.id);
-          console.log(renderResultCard(result));
-          console.log(`Source: Personio ${employer.id}:${job.id} — ${sourceUrl}`);
-          console.log(`Import: ${imported.reused ? "reused" : "created"}\n`);
-          count += 1;
-          if (count >= 25) break;
+        try {
+          const workspace = await loadWorkspace(root);
+          const batch = await discoverPersonioEmployer(employer, repository, workspace, { maxResults: 25 - processed });
+          processed += batch.jobs.length;
+          printDiscoveryDiagnostics(`Personio ${employer.id}`, batch.counters, batch.diagnostics);
+          for (const job of batch.jobs.filter((entry) => entry.actionable && entry.evaluation)) {
+            console.log(renderResultCard({ ...job.evaluation!, title: job.title, company: job.company }));
+            console.log(`Source: Personio ${job.sourceId} — ${job.sourceUrl}`);
+            console.log(`Import: ${job.reused ? "reused" : "created"}\n`);
+            count += 1;
+          }
+        } catch (error) {
+          const diagnostic: SourceDiagnostic = { stage: "search", locator: employer.id, code: "employer_failed", message: error instanceof Error ? error.message : String(error), transient: false };
+          printDiscoveryDiagnostics(`Personio ${employer.id}`, { searched: 0, detailed: 0, imported: 0, skipped: 0, failed: 1 }, [diagnostic]);
         }
-        if (count >= 25) break;
+        if (processed >= 25) break;
       }
       console.log(`Employer shortlist: ${count}`);
       console.log("No application was submitted.");
@@ -154,23 +158,33 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
   const { db, repository } = openRepository(root);
   try {
     const jobsuche = source.id === "jobsuche";
-    const results = jobsuche
+    const batch = jobsuche
       ? await discoverJobsuche(source, repository, workspace)
       : await discoverFreehire(source, repository, workspace);
     const sourceLabel = jobsuche ? "Jobsuche" : "FreeHire";
-    const actionable = results.filter((result) => result.evaluation.archetype !== "X"
+    const actionable = batch.jobs.filter((result) => result.actionable && result.evaluation && result.evaluation.archetype !== "X"
       && !result.evaluation.gates.some((gate) => gate.status === "BLOCKED"));
     const displayed = actionable.slice(0, 10);
-    console.log(`${sourceLabel} discovered: ${results.length} | actionable shortlist: ${actionable.length} | showing: ${displayed.length}`);
+    console.log(`${sourceLabel} discovered: ${batch.jobs.length} | actionable shortlist: ${actionable.length} | showing: ${displayed.length}`);
+    printDiscoveryDiagnostics(sourceLabel, batch.counters, batch.diagnostics);
     for (const result of displayed) {
       console.log("");
-      console.log(renderResultCard({ ...result.evaluation, title: result.title, company: result.company }));
+      console.log(renderResultCard({ ...result.evaluation!, title: result.title, company: result.company }));
       console.log(`Source: ${sourceLabel} ${result.sourceId} — ${result.sourceUrl}`);
       console.log(`Import: ${result.reused ? "reused" : "created"}`);
     }
     console.log("No application was submitted.");
   } finally {
     db.close();
+  }
+}
+
+function printDiscoveryDiagnostics(label: string, counters: DiscoveryCounters, diagnostics: SourceDiagnostic[]): void {
+  console.log(`Counters: searched=${counters.searched} detailed=${counters.detailed} imported=${counters.imported} skipped=${counters.skipped} failed=${counters.failed}`);
+  if (diagnostics.length === 0) return;
+  console.log(`${label} diagnostics: ${diagnostics.length}`);
+  for (const diagnostic of diagnostics) {
+    console.log(`- [${diagnostic.stage}] ${diagnostic.code} ${diagnostic.locator} — ${diagnostic.message}`);
   }
 }
 
