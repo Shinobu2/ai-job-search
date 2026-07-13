@@ -1,0 +1,82 @@
+schema_version: 1
+identity:
+  name: {value: "SYNTHETIC TEST CANDIDATE — DO NOT SUBMIT", verification_status: user_confirmed, provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]}
+  email: {value: synthetic@example.com, verification_status: user_confirmed, provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]}
+  phone: {value: "+49 000 000000", verification_status: user_confirmed, provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]}
+targets:
+  primary_archetypes:
+    value: [DCT_A, DCT_AT]
+    verification_status: user_confirmed
+    provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]
+  fallback_archetypes:
+    value: [F]
+    verification_status: user_confirmed
+    provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]
+  agencies_policy:
+    value: fallback_only
+    verification_status: user_confirmed
+    provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]
+locations:
+  city:
+    value: {name: Frankfurt, country: Germany}
+    verification_status: user_confirmed
+    provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]
+  radius_km:
+    value: 40
+    verification_status: user_confirmed
+    provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]
+  public_transport_required:
+    value: true
+    verification_status: user_confirmed
+    provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]
+availability:
+  target_start:
+    value: {earliest: '2026-08-15', latest: '2026-08-31'}
+    verification_status: user_confirmed
+    provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]
+transport:
+  driver_licence:
+    value: true
+    verification_status: user_confirmed
+    provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]
+  has_car:
+    value: false
+    verification_status: user_confirmed
+    provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]
+languages:
+  english:
+    value: {self_assessed_level: B2}
+    verification_status: user_confirmed
+    provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]
+  german:
+    value: {self_assessed_level: A2}
+    verification_status: user_confirmed
+    provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]
+education:
+  status:
+    value: stated; documentary verification pending
+    verification_status: user_confirmed
+    provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]
+legal:
+  work_authorization:
+    value: null
+    verification_status: unknown
+    provenance: []
+  education_equivalence:
+    value: null
+    verification_status: unknown
+    provenance: []
+constraints:
+  night_shifts:
+    value: blocked
+    verification_status: user_confirmed
+    provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]
+  continuous_heavy_work:
+    value: blocked
+    verification_status: user_confirmed
+    provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]
+compensation:
+  net_monthly_estimate:
+    value: {floor_eur: 1750, target_eur: 2000}
+    verification_status: user_confirmed
+    provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]

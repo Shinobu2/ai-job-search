@@ -1,0 +1,22 @@
+schema_version: 1
+records:
+  - id: SYNTHETIC_PC_HARDWARE
+    kind: hardware
+    statement: Synthetic fixture confirms PC hardware.
+    reviewer_status: user_confirmed
+    provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]
+  - id: SYNTHETIC_CABLING
+    kind: networking
+    statement: Synthetic fixture confirms structured cabling.
+    reviewer_status: user_confirmed
+    provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]
+  - id: SYNTHETIC_TROUBLESHOOTING
+    kind: hardware
+    statement: Synthetic fixture confirms hardware troubleshooting.
+    reviewer_status: user_confirmed
+    provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]
+  - id: SYNTHETIC_UNREVIEWED_SERVER
+    kind: hardware
+    statement: Synthetic fixture has an unreviewed server installation claim.
+    reviewer_status: unreviewed
+    provenance: [{source_type: user_statement, source_ref: synthetic_test_fixture}]
