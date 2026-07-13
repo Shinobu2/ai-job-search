@@ -1,16 +1,21 @@
-type Record_ = { id: string; kind: string; statement: string; reviewer_status: string };
+type Provenance = { source_type?: string; source_ref?: string };
+type Record_ = { id: string; kind: string; statement: string; reviewer_status: string; provenance?: Provenance[] };
 type Mapping = { status: string; evidenceIds: string[] };
 type Gate = { status: string; reason: string; critical?: boolean };
 type VerifiedField = {
   value?: string | null;
   verification_status?: string;
-  provenance?: Array<{ source_type?: string; source_ref?: string }>;
+  provenance?: Provenance[];
 };
+
+function hasValidProvenance(value: { provenance?: Provenance[] }): boolean {
+  return value.provenance?.some((item) => item.source_type && item.source_ref) ?? false;
+}
 
 function verifiedFactValue(field: VerifiedField | undefined): string | null {
   if (!field?.value) return null;
   if (!["user_confirmed", "document_verified"].includes(field.verification_status ?? "")) return null;
-  if (!field.provenance?.some((item) => item.source_type && item.source_ref)) return null;
+  if (!hasValidProvenance(field)) return null;
   return field.value;
 }
 
@@ -22,6 +27,7 @@ export function generateDocumentPacket(input: { title: string; company: string; 
   const allowedIds = new Set(input.evaluation.mappings.filter((mapping) => ["proven", "partial", "transferable"].includes(mapping.status)).flatMap((mapping) => mapping.evidenceIds));
   const evidence = input.workspace.evidence.records.filter((record) => allowedIds.has(record.id)
     && ["user_confirmed", "document_verified"].includes(record.reviewer_status)
+    && hasValidProvenance(record)
     && record.kind !== "planned_project" && record.kind !== "informal_assistance");
   const verify = input.evaluation.gates.filter((gate) => gate.status === "VERIFY").map((gate) => gate.reason);
   if (evidence.length === 0) missing.push("evidence.mapped_role_evidence");

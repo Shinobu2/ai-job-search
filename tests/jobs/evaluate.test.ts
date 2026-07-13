@@ -224,6 +224,27 @@ test("keeps absent critical posting facts as VERIFY", async () => {
   expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "VERIFY", critical: true }));
 });
 
+test("keeps absent or placeholder scope, facilities, and experience facts as critical VERIFY", async () => {
+  for (const text of [
+    "# Hardware Technician\n",
+    "# Hardware Technician\nSkills: TBD\nEducation: unknown\nExperience: TBD\n",
+  ]) {
+    const result = await evaluateText(text);
+
+    expect(result.gates).toContainEqual(expect.objectContaining({ id: "scope", status: "VERIFY", critical: true }));
+    expect(result.gates).toContainEqual(expect.objectContaining({ id: "facilities", status: "VERIFY", critical: true }));
+    expect(result.gates).toContainEqual(expect.objectContaining({ id: "experience", status: "VERIFY", critical: true }));
+  }
+});
+
+test("passes explicit transport, physical, and language non-requirements", async () => {
+  const result = await evaluateText("# Hardware Technician\nCar: No own car required\nPhysical: No continuous heavy work required\nLanguages: German is optional\n");
+
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "transport", status: "PASS", critical: false }));
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "physical", status: "PASS", critical: false }));
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "PASS", critical: false }));
+});
+
 test("keeps an unreliable deadline VERIFY rather than treating it as current", async () => {
   const result = await evaluateText("# Hardware Technician\nDeadline: TBD\n");
 
@@ -345,6 +366,21 @@ test("prefers verified exact support evidence over informal Discord evidence", a
   } as unknown as WorkspaceSnapshot, "2026-07-12");
 
   expect(result.mappings[0]).toMatchObject({ status: "proven", evidenceIds: ["VERIFIED_SUPPORT"] });
+});
+
+test("does not prove exact evidence from reviewer status without provenance", async () => {
+  const extracted = extractVacancy("# Hardware Technician\nSkills: hardware support\n");
+  const result = evaluateVacancy({ id: "status_only_evidence", title: null, company: null, location: null }, {
+    ...extracted,
+    requirements: [{ id: "hardware_support", type: "skill", text: "hardware support", spans: [], rule_ids: [] }],
+  }, {
+    ...workspace,
+    evidence: { records: [
+      { id: "STATUS_ONLY", kind: "hardware", statement: "Hardware support", reviewer_status: "document_verified", provenance: [] },
+    ] },
+  } as unknown as WorkspaceSnapshot, "2026-07-12");
+
+  expect(result.mappings[0]).toMatchObject({ status: "partial", evidenceIds: ["STATUS_ONLY"] });
 });
 
 test("labels result-card mappings without calling provisional evidence strong", async () => {

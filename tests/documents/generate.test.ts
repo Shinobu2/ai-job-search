@@ -19,12 +19,22 @@ test("generates truthful EN/DE drafts from mapped evidence and flags missing ide
 
 test("uses only explicitly confirmed or document-verified evidence", () => {
   const packet = generateDocumentPacket({ title: "Technician", company: "Example", evaluation: { verdict: "VERIFY", tier: "B", mappings: [{ status: "partial", evidenceIds: ["CONFIRMED", "UNREVIEWED"] }], gates: [] }, workspace: { profile: { identity: verifiedIdentity }, evidence: { records: [
-    { id: "CONFIRMED", kind: "hardware", statement: "Personal hardware experience.", reviewer_status: "user_confirmed" },
+    { id: "CONFIRMED", kind: "hardware", statement: "Personal hardware experience.", reviewer_status: "user_confirmed", provenance: [{ source_type: "user_statement", source_ref: "test" }] },
     { id: "UNREVIEWED", kind: "hardware", statement: "Unreviewed claim.", reviewer_status: "unreviewed" },
   ] } } });
   expect(packet.english).toContain("[CONFIRMED]");
   expect(packet.english).not.toContain("[UNREVIEWED]");
   expect(packet.ready_for_submission).toBe(true);
+});
+
+test("excludes confirmed document evidence without valid provenance", () => {
+  const packet = generateDocumentPacket({ title: "Technician", company: "Example", evaluation: { verdict: "PROCEED", tier: "A", mappings: [{ status: "proven", evidenceIds: ["STATUS_ONLY"] }], gates: [] }, workspace: { profile: { identity: verifiedIdentity }, evidence: { records: [
+    { id: "STATUS_ONLY", kind: "hardware", statement: "Status-only hardware claim.", reviewer_status: "user_confirmed", provenance: [] },
+  ] } } });
+
+  expect(packet.english).not.toContain("[STATUS_ONLY]");
+  expect(packet.ready_for_submission).toBe(false);
+  expect(packet.missing).toContain("evidence.mapped_role_evidence");
 });
 
 test("never marks blocked or critical-unknown document packets submission-ready", () => {
