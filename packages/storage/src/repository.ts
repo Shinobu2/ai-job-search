@@ -53,6 +53,7 @@ export interface StoredJob {
 
 export interface StoredJobSource extends StoredJob {
   rawContent: string;
+  rawSnapshotHash: string;
 }
 
 export interface EvidenceMappingInput {
@@ -69,6 +70,17 @@ export interface EvidenceMappingInput {
 
 export type ApplicationStatus = "shortlisted" | "ready_for_review" | "user_submitted" | "interview" | "offer" | "rejected" | "withdrawn";
 export type ApplicationRecord = { job_id: string; status: ApplicationStatus; next_action: string | null; document_dir: string | null; created_at: string; updated_at: string };
+export type ApplicationOptions = { nextAction?: string; documentDir?: string; actor?: string; note?: string; confirmed?: boolean };
+export type DocumentPacketInput = {
+  id: string;
+  jobId: string;
+  evaluationFingerprint: string;
+  evidenceSnapshotHash: string;
+  artifactHashes: Record<string, string>;
+  ready: boolean;
+  directory: string;
+};
+export type DocumentPacketRecord = DocumentPacketInput & { createdAt: string };
 export type DailyActivity = { imported: number; evaluated: number; application_events: number; statuses: Record<string, number> };
 
 const hashPattern = /^[a-f0-9]{64}$/;
@@ -114,7 +126,7 @@ export class StorageRepository {
   }
 
   readJob(jobId: string): StoredJobSource | null {
-    return this.db.query("SELECT j.id, j.title, j.company, j.location, s.raw_content AS rawContent FROM jobs j JOIN job_sources s ON s.id = j.source_id WHERE j.id = ?").get(jobId) as StoredJobSource | null;
+    return this.db.query("SELECT j.id, j.title, j.company, j.location, j.raw_snapshot_hash AS rawSnapshotHash, s.raw_content AS rawContent FROM jobs j JOIN job_sources s ON s.id = j.source_id WHERE j.id = ?").get(jobId) as StoredJobSource | null;
   }
 
   readEvaluation(jobId: string): EvaluationResult | null {
@@ -244,13 +256,89 @@ export class StorageRepository {
     }
   }
 
-  setApplicationStatus(jobId: string, status: ApplicationStatus, options: { nextAction?: string; documentDir?: string; actor?: string; note?: string } = {}): ApplicationRecord {
+  recordDocumentPacket(input: DocumentPacketInput): DocumentPacketRecord {
+    requireValue(input.id, "documentPacket.id");
+    requireValue(input.jobId, "documentPacket.jobId");
+    requireValue(input.directory, "documentPacket.directory");
+    requireHash(input.evaluationFingerprint, "documentPacket.evaluationFingerprint");
+    requireHash(input.evidenceSnapshotHash, "documentPacket.evidenceSnapshotHash");
+    if (typeof input.ready !== "boolean") throw new Error("documentPacket.ready must be a boolean");
+    const artifactEntries = Object.entries(input.artifactHashes);
+    const requiredSlots = ["english_cv", "german_cv", "english_cover_letter", "german_cover_letter", "metadata"];
+    if (artifactEntries.length !== requiredSlots.length || requiredSlots.some((slot) => !(slot in input.artifactHashes))) {
+      throw new Error("documentPacket requires metadata and four artifact hashes");
+    }
+    for (const [slot, hash] of artifactEntries) {
+      requireValue(slot, "documentPacket artifact slot");
+      requireHash(hash, `documentPacket.artifactHashes.${slot}`);
+    }
+    if (!this.readJob(input.jobId)) throw new Error(`Unknown job ID: ${input.jobId}`);
+    const evaluation = this.db.query("SELECT id FROM evaluation_runs WHERE job_id = ? AND semantic_fingerprint = ?").get(input.jobId, input.evaluationFingerprint) as { id: string } | null;
+    if (!evaluation) throw new Error("document packet requires a persisted matching evaluation");
+    const evidenceHashes = (this.db.query("SELECT DISTINCT evidence_snapshot_hash FROM evidence_mappings WHERE evaluation_run_id = ?").all(evaluation.id) as Array<{ evidence_snapshot_hash: string }>).map((row) => row.evidence_snapshot_hash);
+    if ((input.ready && evidenceHashes.length === 0) || evidenceHashes.some((hash) => hash !== input.evidenceSnapshotHash)) {
+      throw new Error("document packet requires the matching evidence snapshot");
+    }
+
+    const createdAt = now();
+    const write = this.db.transaction(() => {
+      this.db.query("INSERT INTO document_packets (id, job_id, evaluation_fingerprint, evidence_snapshot_hash, artifact_hashes_json, ready, directory, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(input.id, input.jobId, input.evaluationFingerprint, input.evidenceSnapshotHash, JSON.stringify(input.artifactHashes), input.ready ? 1 : 0, input.directory, createdAt);
+      this.event("document_packet.recorded", "document_packet", input.id, "system", null, null, { job_id: input.jobId, ready: input.ready });
+    });
+    write.immediate();
+    return { ...input, createdAt };
+  }
+
+  readCurrentDocumentPacket(jobId: string): DocumentPacketRecord | null {
+    const row = this.db.query("SELECT * FROM document_packets WHERE job_id = ? ORDER BY created_at DESC, id DESC LIMIT 1").get(jobId) as {
+      id: string; job_id: string; evaluation_fingerprint: string; evidence_snapshot_hash: string; artifact_hashes_json: string; ready: number; directory: string; created_at: string;
+    } | null;
+    if (!row) return null;
+    return {
+      id: row.id,
+      jobId: row.job_id,
+      evaluationFingerprint: row.evaluation_fingerprint,
+      evidenceSnapshotHash: row.evidence_snapshot_hash,
+      artifactHashes: JSON.parse(row.artifact_hashes_json) as Record<string, string>,
+      ready: row.ready === 1,
+      directory: row.directory,
+      createdAt: row.created_at,
+    };
+  }
+
+  setApplicationStatus(jobId: string, status: ApplicationStatus, options: ApplicationOptions = {}): ApplicationRecord {
     if (!this.readJob(jobId)) throw new Error(`Unknown job ID: ${jobId}`);
+    const current = this.db.query("SELECT * FROM applications WHERE job_id = ?").get(jobId) as ApplicationRecord | null;
+    const external = ["user_submitted", "interview", "offer", "rejected", "withdrawn"].includes(status);
+    if ((status === "rejected" || status === "withdrawn") && !current) throw new Error(`${status} requires an existing application`);
+    if (external && options.confirmed !== true) throw new Error(`${status} requires explicit confirmation`);
+
+    const requiredCurrent: Partial<Record<ApplicationStatus, ApplicationStatus | null>> = {
+      shortlisted: null,
+      ready_for_review: "shortlisted",
+      user_submitted: "ready_for_review",
+      interview: "user_submitted",
+      offer: "interview",
+    };
+    if (status in requiredCurrent && (current?.status ?? null) !== requiredCurrent[status]) {
+      throw new Error(`${status} requires current status ${requiredCurrent[status] ?? "none"}`);
+    }
+
+    let documentDir = options.documentDir;
+    if (status === "ready_for_review") {
+      const latestEvaluation = this.db.query("SELECT semantic_fingerprint FROM evaluation_runs WHERE job_id = ? ORDER BY created_at DESC, id DESC LIMIT 1").get(jobId) as { semantic_fingerprint: string } | null;
+      const packet = this.readCurrentDocumentPacket(jobId);
+      if (!latestEvaluation || !packet || !packet.ready || packet.evaluationFingerprint !== latestEvaluation.semantic_fingerprint) {
+        throw new Error("ready_for_review requires an attested current document packet");
+      }
+      documentDir = packet.directory;
+    }
     const timestamp = now();
     const write = this.db.transaction(() => {
       this.db.query(`INSERT INTO applications (job_id, status, next_action, document_dir, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(job_id) DO UPDATE SET status=excluded.status, next_action=COALESCE(excluded.next_action, applications.next_action), document_dir=COALESCE(excluded.document_dir, applications.document_dir), updated_at=excluded.updated_at`)
-        .run(jobId, status, options.nextAction ?? null, options.documentDir ?? null, timestamp, timestamp);
+        .run(jobId, status, options.nextAction ?? null, documentDir ?? null, timestamp, timestamp);
       this.db.query("INSERT INTO application_events (job_id, status, actor, note, created_at) VALUES (?, ?, ?, ?, ?)").run(jobId, status, options.actor ?? "user", options.note ?? null, timestamp);
     });
     write.immediate();

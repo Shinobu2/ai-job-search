@@ -1,5 +1,6 @@
 import { runDoctor } from "./doctor";
 import { setupWorkspace } from "./setup";
+import { createHash, randomUUID } from "node:crypto";
 import { parse } from "yaml";
 import { readFile } from "node:fs/promises";
 import { mkdir, rename, writeFile } from "node:fs/promises";
@@ -17,9 +18,13 @@ import { discoverFreehire, type FreehireSourceConfig } from "../packages/search/
 import { discoverJobsuche, type JobsucheSourceConfig } from "../packages/search/src/jobsuche";
 import { loadEmployerRegistry } from "../packages/search/src/employer-registry";
 import { readPersonioEmployer } from "../packages/search/src/personio";
-import { generateDocumentPacket } from "../packages/documents/src/generate";
+import { generateDocumentPacket, hashEvidenceSnapshot } from "../packages/documents/src/generate";
 
 type JobFlags = { id?: string; file?: string; text?: string; status?: string; next?: string; note?: string; confirm?: string };
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
 
 function parseFlags(arguments_: string[]): JobFlags {
   const flags: JobFlags = {};
@@ -182,13 +187,41 @@ async function runDocuments(root: string, command: string | undefined, arguments
     if (!job || !evaluation) throw new Error(`Evaluated job is unavailable: ${flags.id}`);
     const packet = generateDocumentPacket({ title: job.title ?? "Unknown role", company: job.company ?? "Unknown company", evaluation, workspace: workspace as never });
     const directory = join(root, "workspace", "documents", flags.id);
+    const relativeDirectory = join("workspace", "documents", flags.id).replace(/\\/g, "/");
     await mkdir(directory, { recursive: true });
+    const artifacts = {
+      english_cv: { file: "cv-en.md", contents: `${packet.englishCv}\n` },
+      german_cv: { file: "cv-de.md", contents: `${packet.germanCv}\n` },
+      english_cover_letter: { file: "cover-letter-en.md", contents: `${packet.englishCoverLetter}\n` },
+      german_cover_letter: { file: "cover-letter-de.md", contents: `${packet.germanCoverLetter}\n` },
+    };
+    const artifactHashes = Object.fromEntries(Object.entries(artifacts).map(([slot, artifact]) => [slot, sha256(artifact.contents)]));
+    const evidenceSnapshotHash = hashEvidenceSnapshot((workspace as { evidence: unknown }).evidence);
+    const packetId = `packet_${randomUUID()}`;
+    const metadata = {
+      packet_id: packetId,
+      job_snapshot_hash: job.rawSnapshotHash,
+      evaluation_fingerprint: evaluation.fingerprint,
+      evidence_snapshot_hash: evidenceSnapshotHash,
+      artifact_hashes: artifactHashes,
+      ready_for_submission: packet.ready_for_submission,
+      missing: packet.missing,
+    };
+    const metadataContents = `${JSON.stringify(metadata, null, 2)}\n`;
     await Promise.all([
-      writeFile(join(directory, "cv-cover-en.md"), `${packet.english}\n`, "utf8"),
-      writeFile(join(directory, "lebenslauf-anschreiben-de.md"), `${packet.german}\n`, "utf8"),
-      writeFile(join(directory, "metadata.json"), `${JSON.stringify({ ready_for_submission: packet.ready_for_submission, missing: packet.missing }, null, 2)}\n`, "utf8"),
+      ...Object.values(artifacts).map((artifact) => writeFile(join(directory, artifact.file), artifact.contents, "utf8")),
+      writeFile(join(directory, "metadata.json"), metadataContents, "utf8"),
     ]);
-    console.log(JSON.stringify({ job_id: flags.id, directory: join("workspace", "documents", flags.id).replace(/\\/g, "/"), ready_for_submission: packet.ready_for_submission, missing: packet.missing }, null, 2));
+    const storedPacket = repository.recordDocumentPacket({
+      id: packetId,
+      jobId: flags.id,
+      evaluationFingerprint: evaluation.fingerprint,
+      evidenceSnapshotHash,
+      artifactHashes: { ...artifactHashes, metadata: sha256(metadataContents) },
+      ready: packet.ready_for_submission,
+      directory: relativeDirectory,
+    });
+    console.log(JSON.stringify({ job_id: flags.id, packet_id: storedPacket.id, directory: relativeDirectory, ready_for_submission: packet.ready_for_submission, missing: packet.missing, hashes: storedPacket.artifactHashes }, null, 2));
   } finally {
     db.close();
   }
@@ -208,23 +241,8 @@ async function runApplications(root: string, command: string | undefined, argume
       const statuses = ["shortlisted", "ready_for_review", "user_submitted", "interview", "offer", "rejected", "withdrawn"] as const;
       if (!flags.id || !flags.status || !statuses.includes(flags.status as ApplicationStatus)) throw new Error(`applications set requires --id and --status (${statuses.join("|")})`);
       const status = flags.status as ApplicationStatus;
-      const current = repository.listApplications().find((item) => item.job_id === flags.id);
       const explicitlyConfirmed = flags.confirm === "yes";
-      if (["user_submitted", "interview", "offer", "rejected", "withdrawn"].includes(status) && !explicitlyConfirmed) {
-        throw new Error(`${status} requires --confirm yes because it records an external real-world event`);
-      }
-      if (status === "user_submitted" && current?.status !== "ready_for_review") throw new Error("user_submitted requires current status ready_for_review");
-      if (status === "interview" && current?.status !== "user_submitted") throw new Error("interview requires current status user_submitted");
-      if (status === "offer" && current?.status !== "interview") throw new Error("offer requires current status interview");
-      let documentDir: string | undefined;
-      if (status === "ready_for_review") {
-        documentDir = join("workspace", "documents", flags.id).replace(/\\/g, "/");
-        let metadata: { ready_for_submission?: boolean };
-        try { metadata = JSON.parse(await readFile(join(root, documentDir, "metadata.json"), "utf8")) as { ready_for_submission?: boolean }; }
-        catch { throw new Error("ready_for_review requires a generated document packet"); }
-        if (metadata.ready_for_submission !== true) throw new Error("ready_for_review requires document metadata ready_for_submission=true");
-      }
-      console.log(JSON.stringify(repository.setApplicationStatus(flags.id, status, { nextAction: flags.next, note: flags.note, documentDir, actor: explicitlyConfirmed ? "user_confirmed_cli" : "user" }), null, 2));
+      console.log(JSON.stringify(repository.setApplicationStatus(flags.id, status, { nextAction: flags.next, note: flags.note, actor: explicitlyConfirmed ? "user_confirmed_cli" : "user", confirmed: explicitlyConfirmed }), null, 2));
       return;
     }
     throw new Error("Usage: applications <set|list>");

@@ -17,10 +17,14 @@ test("migrations create the Stage 1 schema, enforce foreign keys, and are repeat
     const first = migrate(db);
     const second = migrate(db);
 
-    expect(first.applied).toEqual(["001_stage1.sql", "002_capabilities.sql", "003_evidence_mapping_requirement_fk.sql", "004_application_tracking.sql"]);
+    expect(first.applied).toEqual(["001_stage1.sql", "002_capabilities.sql", "003_evidence_mapping_requirement_fk.sql", "004_application_tracking.sql", "005_document_packets.sql"]);
     expect(second.applied).toEqual([]);
     expect(db.query("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
     expect(db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'event_history'").get()).toBeDefined();
+    expect(db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'document_packets'").get()).toBeDefined();
+    expect((db.query("PRAGMA table_info(document_packets)").all() as Array<{ name: string }>).map((column) => column.name)).toEqual([
+      "id", "job_id", "evaluation_fingerprint", "evidence_snapshot_hash", "artifact_hashes_json", "ready", "directory", "created_at",
+    ]);
     expect(() =>
       db.run(
         "INSERT INTO jobs (id, source_id, raw_snapshot_hash, provenance_json, created_at) VALUES (?, ?, ?, ?, ?)",

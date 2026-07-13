@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
-import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { openDatabase } from "../../packages/storage/src/database";
+import { migrate } from "../../packages/storage/src/migrate";
+import { StorageRepository } from "../../packages/storage/src/repository";
 
 const root = resolve(import.meta.dir, "../..");
 const cli = join(root, "scripts", "cli.ts");
@@ -12,7 +15,7 @@ async function run(cwd: string, args: string[]) {
   return { code, stdout: await new Response(child.stdout).text(), stderr: await new Response(child.stderr).text() };
 }
 
-test("application CLI guards real-world states and records ready document directory", async () => {
+test("application CLI delegates transitions and rejects forged document metadata", async () => {
   const directory = await mkdtemp(join(tmpdir(), "career-control-room-tracking-cli-"));
   await cp(join(root, "workspace.example"), join(directory, "workspace"), { recursive: true });
   try {
@@ -20,14 +23,36 @@ test("application CLI guards real-world states and records ready document direct
     expect(imported.code).toBe(0);
     const id = (JSON.parse(imported.stdout) as { id: string }).id;
     expect((await run(directory, ["applications", "set", "--id", id, "--status", "user_submitted", "--confirm", "yes"])).stderr).toContain("requires current status ready_for_review");
+    expect((await run(directory, ["applications", "set", "--id", id, "--status", "shortlisted"])).code).toBe(0);
     const packet = join(directory, "workspace", "documents", id);
     await mkdir(packet, { recursive: true });
     await writeFile(join(packet, "metadata.json"), JSON.stringify({ ready_for_submission: true }));
-    expect((await run(directory, ["applications", "set", "--id", id, "--status", "ready_for_review"])).code).toBe(0);
-    expect((await run(directory, ["applications", "set", "--id", id, "--status", "user_submitted"])).stderr).toContain("requires --confirm yes");
-    const submitted = await run(directory, ["applications", "set", "--id", id, "--status", "user_submitted", "--confirm", "yes"]);
-    expect(submitted.code).toBe(0);
-    expect(JSON.parse(submitted.stdout)).toMatchObject({ status: "user_submitted", document_dir: `workspace/documents/${id}` });
+    expect((await run(directory, ["applications", "set", "--id", id, "--status", "ready_for_review"])).stderr).toContain("attested current document packet");
+    expect((await run(directory, ["applications", "set", "--id", id, "--status", "user_submitted"])).stderr).toContain("explicit confirmation");
+  } finally {
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
+  }
+});
+
+test("documents CLI hashes written artifacts and records the packet attestation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "career-control-room-documents-cli-"));
+  await cp(join(root, "workspace.example"), join(directory, "workspace"), { recursive: true });
+  try {
+    const imported = await run(directory, ["job", "import", "--text", "# Technician\nCompany: Example\nLocation: Frankfurt\nSkills: hardware troubleshooting"]);
+    const id = (JSON.parse(imported.stdout) as { id: string }).id;
+    expect((await run(directory, ["job", "evaluate", "--id", id])).code).toBe(0);
+    const generated = await run(directory, ["documents", "generate", "--id", id]);
+    expect(generated.code).toBe(0);
+    const result = JSON.parse(generated.stdout) as { packet_id: string; hashes: Record<string, string> };
+    const metadata = JSON.parse(await readFile(join(directory, "workspace", "documents", id, "metadata.json"), "utf8")) as { packet_id: string; artifact_hashes: Record<string, string> };
+    expect(metadata.packet_id).toBe(result.packet_id);
+    expect(Object.keys(metadata.artifact_hashes).sort()).toEqual(["english_cover_letter", "english_cv", "german_cover_letter", "german_cv"]);
+    expect(Object.values(result.hashes).every((hash) => /^[a-f0-9]{64}$/.test(hash))).toBe(true);
+    const db = openDatabase(join(directory, "workspace", "control-room.sqlite"));
+    try {
+      migrate(db);
+      expect(new StorageRepository(db).readCurrentDocumentPacket(id)).toMatchObject({ id: result.packet_id, artifactHashes: result.hashes });
+    } finally { db.close(); }
   } finally {
     await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
   }
