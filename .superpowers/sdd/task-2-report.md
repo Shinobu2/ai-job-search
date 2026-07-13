@@ -149,3 +149,57 @@ bun run typecheck
 Result: exited 0 with **98 pass, 0 fail, and 326 expectations**, followed by a
 clean `tsc --noEmit` run. The real workspace database was inspected read-only
 and was not migrated or otherwise mutated.
+
+---
+
+## Identifier-boundary re-review correction
+
+### Root cause and RED
+
+The packet-specific directory comparison constructed its expected path with
+`resolve(documentsRoot, jobId, packetId)` before validating either identifier.
+A packet ID such as `../other/packet-z` therefore normalized to another job's
+directory and could make the later equality check succeed.
+
+Targeted RED:
+
+```powershell
+bun test tests/tracking/tracking.test.ts --test-name-pattern "modified, missing, and traversal"
+```
+
+Result: exited 1 with **0 pass, 1 fail, 4 filtered tests, and 5 expectations**.
+`packetId="../other/packet-z"` was accepted and persisted instead of being
+rejected as a non-segment identifier.
+
+### Correction and additional coverage
+
+- `recordDocumentPacket()` now validates both packet ID and job ID against a
+  single safe path-segment grammar before any database lookup or path
+  resolution. Dots inside an identifier remain supported, while `.`, `..`,
+  slashes, backslashes, and separator-based traversal are rejected.
+- The existing safe cross-job directory regression remains in place.
+- A Windows junction capability probe succeeded, so a non-skipped regression
+  now proves that a packet routed through a job-directory ancestor junction is
+  rejected after real-path comparison.
+- A deterministic CLI regression changes the evidence snapshot after
+  evaluation, forces attestation recording to fail after directory promotion,
+  and verifies that the promoted packet directory is removed.
+
+Focused GREEN:
+
+```powershell
+bun test tests/storage/migrations.test.ts tests/tracking/tracking.test.ts tests/tracking/cli.test.ts
+```
+
+Result: exited 0 with **11 pass, 0 fail, and 49 expectations**.
+
+Final repository verification:
+
+```powershell
+bun test
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+bun run typecheck
+```
+
+Result: exited 0 with **100 pass, 0 fail, and 333 expectations**, followed by a
+clean `tsc --noEmit` run.

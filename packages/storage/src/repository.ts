@@ -90,6 +90,7 @@ export type EvaluationAttestation = { evaluationRunId: string; evaluationFingerp
 export type DailyActivity = { imported: number; evaluated: number; application_events: number; statuses: Record<string, number> };
 
 const hashPattern = /^[a-f0-9]{64}$/;
+const pathSegmentPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const packetArtifactFiles = {
   english_cv: "cv-en.md",
   german_cv: "cv-de.md",
@@ -108,6 +109,12 @@ function requireValue(value: unknown, label: string): asserts value {
 
 function requireHash(value: string, label: string): void {
   if (!hashPattern.test(value)) throw new Error(`${label} must be a SHA-256 hash`);
+}
+
+function requirePathSegment(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || !pathSegmentPattern.test(value) || value === "." || value === "..") {
+    throw new Error(`${label} must be a single safe path segment`);
+  }
 }
 
 function now(): string {
@@ -278,8 +285,8 @@ export class StorageRepository {
   }
 
   recordDocumentPacket(input: DocumentPacketInput): DocumentPacketRecord {
-    requireValue(input.id, "documentPacket.id");
-    requireValue(input.jobId, "documentPacket.jobId");
+    requirePathSegment(input.id, "documentPacket.id");
+    requirePathSegment(input.jobId, "documentPacket.jobId");
     requireValue(input.directory, "documentPacket.directory");
     requireValue(input.evaluationRunId, "documentPacket.evaluationRunId");
     requireHash(input.jobSnapshotHash, "documentPacket.jobSnapshotHash");

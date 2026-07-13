@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDatabase } from "../../packages/storage/src/database";
@@ -109,6 +109,8 @@ test("rejects modified, missing, and traversal-based artifact packets", () => {
 
     expect(() => repository.recordDocumentPacket(packetInput("packet-z", "../outside", missing.artifactHashes))).toThrow("safe workspace documents directory");
     expect(() => repository.recordDocumentPacket(packetInput("packet-z", "workspace/documents/other/packet-z", missing.artifactHashes))).toThrow("packet-specific document directory");
+    expect(() => repository.recordDocumentPacket(packetInput("../other/packet-z", "workspace/documents/other/packet-z", missing.artifactHashes))).toThrow("single safe path segment");
+    expect(() => repository.recordDocumentPacket({ ...packetInput("packet-z", "workspace/documents/j/packet-z", missing.artifactHashes), jobId: "../j" })).toThrow("single safe path segment");
   } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -122,6 +124,23 @@ test("rejects a packet after a newer evaluation run with the same fingerprint", 
     repository.recordDocumentPacket(packetInput("packet", files.relativeDirectory, files.artifactHashes));
     persistEvaluation(repository, "j", "-new", "b".repeat(64), "9".repeat(64));
     expect(() => repository.setApplicationStatus("j", "ready_for_review")).toThrow("attested current document packet");
+  } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("rejects a packet whose job-directory ancestor is a junction", () => {
+  const root = mkdtempSync(join(tmpdir(), "career-control-room-junction-"));
+  const db = openDatabase(":memory:"); migrate(db); const repository = new StorageRepository(db, root);
+  try {
+    addJobAndEvaluation(repository);
+    repository.setApplicationStatus("j", "shortlisted");
+    const documentsRoot = join(root, "workspace", "documents");
+    const outsideJobDirectory = join(root, "outside-job");
+    mkdirSync(documentsRoot, { recursive: true });
+    mkdirSync(outsideJobDirectory);
+    symlinkSync(outsideJobDirectory, join(documentsRoot, "j"), "junction");
+    const files = writePacket(root, "j", "packet");
+    repository.recordDocumentPacket(packetInput("packet", files.relativeDirectory, files.artifactHashes));
+    expect(() => repository.setApplicationStatus("j", "ready_for_review")).toThrow("safe workspace documents directory");
   } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
 });
 

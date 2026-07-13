@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { openDatabase } from "../../packages/storage/src/database";
@@ -64,6 +64,25 @@ test("documents CLI hashes written artifacts and records the packet attestation"
     const second = JSON.parse(generatedAgain.stdout) as { packet_id: string; directory: string };
     expect(second.directory).not.toBe(result.directory);
     expect(await readFile(metadataPath)).toEqual(metadataBytes);
+  } finally {
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
+  }
+});
+
+test("documents CLI removes a promoted packet when attestation recording fails", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "career-control-room-documents-cleanup-"));
+  await cp(join(root, "workspace.example"), join(directory, "workspace"), { recursive: true });
+  try {
+    const imported = await run(directory, ["job", "import", "--text", "# Technician\nCompany: Example\nLocation: Frankfurt\nSkills: hardware troubleshooting"]);
+    const id = (JSON.parse(imported.stdout) as { id: string }).id;
+    expect((await run(directory, ["job", "evaluate", "--id", id])).code).toBe(0);
+    const evidencePath = join(directory, "workspace", "evidence.yml");
+    const evidence = await readFile(evidencePath, "utf8");
+    await writeFile(evidencePath, evidence.replace("Personal PC hardware experience reported by candidate.", "Changed after evaluation."));
+    const generated = await run(directory, ["documents", "generate", "--id", id]);
+    expect(generated.code).toBe(1);
+    expect(generated.stderr).toContain("matching evidence snapshot");
+    expect(await readdir(join(directory, "workspace", "documents", id))).toEqual([]);
   } finally {
     await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
   }
