@@ -62,3 +62,31 @@ test("fetchWithRetry cancels transient response bodies before retrying", async (
   expect(attempts).toBe(2);
   expect(cancellations).toBe(1);
 });
+
+test("fetchWithRetry treats response cleanup as best-effort", async () => {
+  let attempts = 0;
+  const fetcher = (async () => {
+    attempts += 1;
+    if (attempts === 1) {
+      return new Response(new ReadableStream({ cancel() { return Promise.reject(new Error("cleanup failed")); } }), { status: 503 });
+    }
+    return new Response("ok", { status: 200 });
+  }) as unknown as typeof fetch;
+
+  const response = await fetchWithRetry("https://example.test/read", {}, { sleep: async () => {} }, fetcher);
+  expect(await response.text()).toBe("ok");
+  expect(attempts).toBe(2);
+});
+
+test("fetchWithRetry cancels the terminal retryable response before throwing its HTTP failure", async () => {
+  let attempts = 0;
+  let cancellations = 0;
+  const fetcher = (async () => {
+    attempts += 1;
+    return new Response(new ReadableStream({ cancel() { cancellations += 1; } }), { status: 503 });
+  }) as unknown as typeof fetch;
+
+  await expect(fetchWithRetry("https://example.test/read", {}, { sleep: async () => {} }, fetcher)).rejects.toMatchObject({ code: "http_503" });
+  expect(attempts).toBe(3);
+  expect(cancellations).toBe(3);
+});

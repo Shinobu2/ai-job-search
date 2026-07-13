@@ -76,8 +76,14 @@ export async function fetchWithRetry(
         `http_${response.status}`,
         transient,
       );
+      if (transient) {
+        try {
+          await response.body?.cancel();
+        } catch {
+          // Response cleanup is best-effort and must not replace the HTTP failure.
+        }
+      }
       if (!transient || attempt === RETRY_DELAYS.length) throw failure;
-      await response.body?.cancel();
     } catch (error) {
       const failure = networkFailure(error);
       if (!failure || !failure.transient || attempt === RETRY_DELAYS.length) throw failure ?? error;

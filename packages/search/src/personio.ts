@@ -22,17 +22,24 @@ type XmlText = { kind: "text"; value: string; cdata: boolean };
 type XmlNode = { kind: "node"; name: string; children: Array<XmlNode | XmlText> };
 
 function decodeEntities(value: string, strict = true): string {
-  const named: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: " " };
+  const named: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'" };
   let output = "";
   let cursor = 0;
-  for (const match of value.matchAll(/&(#\d+|#x[\da-f]+|[A-Za-z][\w.-]*);/g)) {
+  for (const match of value.matchAll(/&(#\d+|#x[\da-fA-F]+|[A-Za-z][\w.-]*);/g)) {
     const index = match.index ?? 0;
     const prefix = value.slice(cursor, index);
     if (strict && prefix.includes("&")) throw new Error("Malformed XML entity reference");
     output += prefix;
     const token = match[1];
-    if (token.startsWith("#x")) output += String.fromCodePoint(Number.parseInt(token.slice(2), 16));
-    else if (token.startsWith("#")) output += String.fromCodePoint(Number(token.slice(1)));
+    if (token.startsWith("#")) {
+      const codepoint = token.startsWith("#x") ? Number.parseInt(token.slice(2), 16) : Number(token.slice(1));
+      const allowed = codepoint === 0x9 || codepoint === 0xa || codepoint === 0xd
+        || (codepoint >= 0x20 && codepoint <= 0xd7ff)
+        || (codepoint >= 0xe000 && codepoint <= 0xfffd)
+        || (codepoint >= 0x10000 && codepoint <= 0x10ffff);
+      if (!allowed) throw new Error(`Invalid XML codepoint: ${codepoint}`);
+      output += String.fromCodePoint(codepoint);
+    }
     else {
       const decoded = named[token];
       if (decoded === undefined) throw new Error(`Unknown XML entity: &${token};`);
@@ -86,8 +93,10 @@ function parseXml(xml: string): XmlNode {
       if (!current || current === document || current.name !== name) throw new Error(`Malformed XML: unexpected closing tag ${name}`);
     } else {
       const selfClosing = token.endsWith("/");
-      const name = token.replace(/\/$/, "").trim().split(/\s+/, 1)[0];
-      if (!name || !/^[a-z_][\w:.-]*$/i.test(name)) throw new Error("Malformed XML: invalid tag name");
+      const opening = token.replace(/\/$/, "").trim().match(/^([a-z_][\w:.-]*)([\s\S]*)$/i);
+      if (!opening) throw new Error("Malformed XML: invalid tag name");
+      const [, name, attributes] = opening;
+      decodeEntities(attributes);
       const node: XmlNode = { kind: "node", name, children: [] };
       stack.at(-1)?.children.push(node);
       if (!selfClosing) stack.push(node);
@@ -207,7 +216,7 @@ export async function discoverPersonioEmployer(
   const diagnostics: SourceDiagnostic[] = [];
   const rows: DiscoveryBatch["jobs"] = [];
   let scope: DiscoveryScopeSummary = { planned: 1, completed: 0, failed: 1 };
-  let batch!: DiscoveryBatch;
+  let batch: DiscoveryBatch = { sourceId, status: "failed", scope, jobs: [], counters, diagnostics };
 
   try {
     const read = await readPersonioEmployer(employer, options.fetcher ?? fetch, options);

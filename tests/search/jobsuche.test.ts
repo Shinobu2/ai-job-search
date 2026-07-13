@@ -193,6 +193,61 @@ test("Jobsuche invalid records are diagnosed, fail all-invalid batches, and make
   }
 });
 
+test("Jobsuche keeps valid siblings when a search list contains null", async () => {
+  const db = openDatabase(":memory:");
+  migrate(db);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL) => {
+    if (String(input).includes("/pc/v6/jobs?")) return response({ ergebnisliste: [null, { referenznummer: "good" }] });
+    return response({ referenznummer: "good", stellenangebotsTitel: "Technician", firma: "Fixture", arbeitsorte: [{ ort: "Frankfurt" }] });
+  }) as typeof fetch;
+  try {
+    const batch = await discoverJobsuche(source, new StorageRepository(db), workspace as never);
+    expect(batch.status).toBe("partial");
+    expect(batch.jobs.map((job) => job.sourceId)).toEqual(["jobsuche:good"]);
+    expect(batch.diagnostics).toContainEqual(expect.objectContaining({ stage: "parse", code: "invalid_record" }));
+    expect(db.query("SELECT COUNT(*) AS count FROM discovery_runs WHERE status = 'running'").get()).toEqual({ count: 0 });
+  } finally {
+    globalThis.fetch = originalFetch;
+    db.close();
+  }
+});
+
+test("Jobsuche rejects non-scalar search and detail identity fields and always finishes the run", async () => {
+  const malformedRecords = [
+    { stage: "search", field: "referenznummer", value: 42 },
+    { stage: "detail", field: "stellenangebotsTitel", value: { text: "not scalar" } },
+    { stage: "detail", field: "firma", value: 42 },
+    { stage: "detail", field: "arbeitsorte", value: [{ ort: { city: "Frankfurt" } }] },
+  ] as const;
+  for (const malformed of malformedRecords) {
+    const db = openDatabase(":memory:");
+    migrate(db);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes("/pc/v6/jobs?")) {
+        const bad = malformed.stage === "search" ? { [malformed.field]: malformed.value } : { referenznummer: "bad" };
+        return response({ ergebnisliste: [bad, { referenznummer: "good" }] });
+      }
+      const ref = Buffer.from(decodeURIComponent(url.split("/").at(-1) as string), "base64").toString("utf8");
+      const detail = { referenznummer: ref, stellenangebotsTitel: "Technician", firma: "Fixture", arbeitsorte: [{ ort: "Frankfurt" }] };
+      return response(malformed.stage === "detail" && ref === "bad" ? { ...detail, [malformed.field]: malformed.value } : detail);
+    }) as typeof fetch;
+    try {
+      const batch = await discoverJobsuche(source, new StorageRepository(db), workspace as never);
+      expect(batch.status).toBe("partial");
+      expect(batch.jobs.map((job) => job.sourceId)).toEqual(["jobsuche:good"]);
+      expect(batch.diagnostics).toContainEqual(expect.objectContaining({ stage: "parse", code: "invalid_record" }));
+      expect(db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 1 });
+      expect(db.query("SELECT COUNT(*) AS count FROM discovery_runs WHERE status = 'running'").get()).toEqual({ count: 0 });
+    } finally {
+      globalThis.fetch = originalFetch;
+      db.close();
+    }
+  }
+});
+
 test("Jobsuche empty planned scopes fail diagnostically without network access", async () => {
   const db = openDatabase(":memory:");
   migrate(db);

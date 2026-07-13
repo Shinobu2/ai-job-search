@@ -147,12 +147,6 @@ export async function importVacancy(request: ImportRequest, repository: StorageR
   const stableKey = canonicalUrl ?? (request.sourceId ? `source-id:${request.sourceId}` : source.rawHash);
   const sourceId = `source_${hash(`source:${stableKey}:${source.rawHash}`)}`;
   const jobId = `job_${hash(`job:${stableKey}:${source.rawHash}`)}`;
-  const existing = repository.readJob(jobId);
-  if (existing) {
-    const observed = repository.observeVacancy({ jobId, rawHash: source.rawHash, canonicalUrl, stableSourceId: request.sourceId, discoveryRunId: options.discoveryRunId, observedAt: options.observedAt });
-    return asImported(existing, source.rawHash, true, observed.logicalVacancyId, observed.version);
-  }
-
   const input = {
     source: {
       id: sourceId,
@@ -175,12 +169,17 @@ export async function importVacancy(request: ImportRequest, repository: StorageR
     },
   };
   const observation = { jobId, rawHash: source.rawHash, canonicalUrl, stableSourceId: request.sourceId, discoveryRunId: options.discoveryRunId, observedAt: options.observedAt };
-  let observed: { logicalVacancyId: string; version: number };
   if (options.discoveryRunId) {
-    observed = repository.importJobAndObserve(input, observation);
-  } else {
-    repository.importJob(input);
-    observed = repository.observeVacancy(observation);
+    const observed = repository.importJobAndObserve(input, observation);
+    return { id: jobId, reused: observed.existing, sourceHash: source.rawHash, ...values, logicalVacancyId: observed.logicalVacancyId, version: observed.version };
   }
+
+  const existing = repository.readJob(jobId);
+  if (existing) {
+    const observed = repository.observeVacancy(observation);
+    return asImported(existing, source.rawHash, true, observed.logicalVacancyId, observed.version);
+  }
+  repository.importJob(input);
+  const observed = repository.observeVacancy(observation);
   return { id: jobId, reused: false, sourceHash: source.rawHash, ...values, logicalVacancyId: observed.logicalVacancyId, version: observed.version };
 }

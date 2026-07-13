@@ -297,6 +297,39 @@ test("FreeHire thrown malformed envelopes finish diagnostically without a runnin
   }
 });
 
+test("FreeHire rejects non-scalar detail identity fields and always finishes the run", async () => {
+  const malformedDetails = [
+    { field: "public_slug", value: 42 },
+    { field: "title", value: { text: "not scalar" } },
+    { field: "company", value: 42 },
+    { field: "location", value: { city: "Frankfurt" } },
+  ] as const;
+  for (const malformed of malformedDetails) {
+    const db = openDatabase(":memory:");
+    migrate(db);
+    const originalFetch = globalThis.fetch;
+    const bad = freehireJob(`bad-${malformed.field}`);
+    const good = freehireJob(`good-${malformed.field}`);
+    globalThis.fetch = (async (input: string | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/search")) return response({ data: [bad, good] });
+      const selected = url.pathname.endsWith(`/${bad.public_slug}`) ? { ...bad, [malformed.field]: malformed.value } : good;
+      return response({ data: selected });
+    }) as typeof fetch;
+    try {
+      const batch = await discoverFreehire({ ...source, cities: ["Frankfurt"] }, new StorageRepository(db), workspace as never);
+      expect(batch.status).toBe("partial");
+      expect(batch.jobs.map((job) => job.sourceId)).toEqual([`freehire:${good.public_slug}`]);
+      expect(batch.diagnostics).toContainEqual(expect.objectContaining({ stage: "parse", code: "invalid_record" }));
+      expect(db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 1 });
+      expect(db.query("SELECT COUNT(*) AS count FROM discovery_runs WHERE status = 'running'").get()).toEqual({ count: 0 });
+    } finally {
+      globalThis.fetch = originalFetch;
+      db.close();
+    }
+  }
+});
+
 test("FreeHire invalid records are diagnosed, fail all-invalid batches, and make mixed batches partial", async () => {
   for (const mixed of [false, true]) {
     const db = openDatabase(":memory:");

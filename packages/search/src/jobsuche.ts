@@ -63,7 +63,7 @@ type JobsucheDetail = {
   arbeitszeitSchichtNachtWochenende?: boolean;
 };
 
-type JobsucheSearchResponse = { stellenangebote?: JobsucheSearchJob[]; ergebnisliste?: JobsucheSearchJob[] };
+type JobsucheSearchResponse = { stellenangebote?: unknown[]; ergebnisliste?: unknown[] };
 
 const JOBSUCHE_BASE_URL = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service";
 const JOBSUCHE_API_KEY = "jobboerse-jobsuche";
@@ -77,6 +77,31 @@ async function readJson<T>(url: string, options: DiscoveryOptions, label: string
 
 function referenceNumber(job: Pick<JobsucheSearchJob, "referenznummer" | "refnr">): string | null {
   return job.referenznummer ?? job.refnr ?? null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function hasOptionalStrings(value: Record<string, unknown>, names: string[]): boolean {
+  return names.every((name) => value[name] === undefined || typeof value[name] === "string");
+}
+
+function isLocation(value: unknown): value is JobsucheLocation {
+  return isRecord(value) && hasOptionalStrings(value, ["ort", "region", "land"]);
+}
+
+function isWrappedLocations(value: unknown): boolean {
+  return value === undefined || (Array.isArray(value) && value.every((row) => isRecord(row) && (row.adresse === undefined || isLocation(row.adresse))));
+}
+
+function searchRecord(value: unknown): JobsucheSearchJob | null {
+  if (!isRecord(value)
+    || !hasOptionalStrings(value, ["referenznummer", "refnr", "beruf", "arbeitgeber", "externeUrl", "stellenangebotsTitel", "hauptberuf", "firma"])
+    || (value.arbeitsort !== undefined && !isLocation(value.arbeitsort))
+    || !isWrappedLocations(value.stellenlokationen)) return null;
+  const job = value as JobsucheSearchJob;
+  return referenceNumber(job)?.trim() ? job : null;
 }
 
 function searchUrl(keyword: string, city: string, page: number, pageSize: number): string {
@@ -147,16 +172,29 @@ function canonicalText(detail: JobsucheDetail, summary: JobsucheSearchJob, refnr
   ].join("\n");
 }
 
-function searchListings(value: JobsucheSearchResponse): JobsucheSearchJob[] {
+function searchListings(value: JobsucheSearchResponse): unknown[] {
   if (!value || typeof value !== "object") throw new ReadFailure("Jobsuche returned an invalid search envelope", "invalid_envelope", false);
   const listings = value.ergebnisliste ?? value.stellenangebote;
   if (!Array.isArray(listings)) throw new ReadFailure("Jobsuche returned an invalid search envelope", "invalid_envelope", false);
   return listings;
 }
 
-function detailRecord(value: JobsucheDetail): JobsucheDetail {
+function detailRecord(value: unknown): JobsucheDetail {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new ReadFailure("Jobsuche returned an invalid detail record", "invalid_envelope", false);
-  return value;
+  const detail = value as Record<string, unknown>;
+  const valid = hasOptionalStrings(detail, [
+    "referenznummer", "refnr", "stellenangebotsTitel", "titel", "arbeitgeber", "stellenangebotsBeschreibung",
+    "stellenbeschreibung", "aktuelleVeroeffentlichungsdatum", "ersteVeroeffentlichungsdatum", "befristung", "firma",
+    "datumErsteVeroeffentlichung",
+  ])
+    && (detail.arbeitsorte === undefined || (Array.isArray(detail.arbeitsorte) && detail.arbeitsorte.every(isLocation)))
+    && isWrappedLocations(detail.stellenlokationen)
+    && (detail.arbeitszeitmodelle === undefined || (Array.isArray(detail.arbeitszeitmodelle) && detail.arbeitszeitmodelle.every((entry) => typeof entry === "string")))
+    && (detail.veroeffentlichungszeitraum === undefined
+      || (isRecord(detail.veroeffentlichungszeitraum) && hasOptionalStrings(detail.veroeffentlichungszeitraum, ["von"])))
+    && (detail.arbeitszeitSchichtNachtWochenende === undefined || typeof detail.arbeitszeitSchichtNachtWochenende === "boolean");
+  if (!valid) throw new ReadFailure("Jobsuche returned a detail record with invalid field types", "invalid_record", false);
+  return detail as JobsucheDetail;
 }
 
 function sortResults(rows: DiscoveredJob[]): DiscoveredJob[] {
@@ -199,7 +237,14 @@ export async function discoverJobsuche(
   const completedScopes = new Set<number>();
   const seen = new Map<string, JobsucheSearchJob>();
   const rows: DiscoveredJob[] = [];
-  let batch!: DiscoveryBatch;
+  let batch: DiscoveryBatch = {
+    sourceId: source.id,
+    status: "failed",
+    scope: { planned: scopes.length, completed: 0, failed: scopes.length },
+    jobs: [],
+    counters,
+    diagnostics,
+  };
 
   try {
     if (scopes.length === 0) {
@@ -222,12 +267,15 @@ export async function discoverJobsuche(
         diagnostics.push(diagnosticFromError(result.reason, result.reason instanceof ReadFailure && result.reason.code.startsWith("invalid_") ? "parse" : "search", searchUrl(scope.keyword, scope.city, page, source.page_size)));
         return;
       }
-      for (const job of result.value) {
-        const refnr = referenceNumber(job);
-        if (!refnr) {
+      for (const value of result.value) {
+        const job = searchRecord(value);
+        if (!job) {
           counters.failed += 1;
-          diagnostics.push({ stage: "parse", locator: searchUrl(scope.keyword, scope.city, page, source.page_size), code: "invalid_record", message: "Jobsuche search record is missing a reference number", transient: false });
-        } else if (!seen.has(refnr)) seen.set(refnr, job);
+          diagnostics.push({ stage: "parse", locator: searchUrl(scope.keyword, scope.city, page, source.page_size), code: "invalid_record", message: "Jobsuche search record has an invalid reference number or field type", transient: false });
+        } else {
+          const refnr = referenceNumber(job) as string;
+          if (!seen.has(refnr)) seen.set(refnr, job);
+        }
       }
       if (result.value.length < source.page_size || page === source.max_pages) {
         active[index] = false;
@@ -242,7 +290,7 @@ export async function discoverJobsuche(
 
   const summaries = [...seen.entries()].slice(0, MAX_DISCOVERY_RESULTS);
   counters.detailed = summaries.length;
-  const details = await mapBounded(summaries, CONCURRENCY, async ([refnr]) => detailRecord(await readJson<JobsucheDetail>(detailUrl(refnr), options, "Jobsuche")));
+  const details = await mapBounded(summaries, CONCURRENCY, async ([refnr]) => detailRecord(await readJson<unknown>(detailUrl(refnr), options, "Jobsuche")));
   for (let index = 0; index < details.length; index += 1) {
     const result = details[index];
     const [refnr, summary] = summaries[index];
@@ -312,7 +360,7 @@ export async function discoverJobsuche(
     counters.failed += 1;
     diagnostics.push({ stage: "parse", locator: source.id, code: "connector_exception", message: error instanceof Error ? error.message : String(error), transient: false });
     const status = discoveryStatus(counters);
-    batch = { sourceId: source.id, status, scope: { planned: scopes.length, completed: completedScopes.size, failed: failedScopes.size }, jobs: sortResults(rows), counters, diagnostics };
+    batch = { sourceId: source.id, status, scope: { planned: scopes.length, completed: completedScopes.size, failed: failedScopes.size }, jobs: [...rows], counters, diagnostics };
   } finally {
     repository.finishDiscoveryRun(runId, { status: batch.status, counters, diagnostics, finishedAt: now() });
   }

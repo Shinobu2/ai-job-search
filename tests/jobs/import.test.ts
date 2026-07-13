@@ -287,6 +287,41 @@ test("discovery import atomically records new and reused snapshots in their runs
   }
 });
 
+test("concurrent discovery imports decide reuse inside SQLite and observe both runs", async () => {
+  const fixture = await repository();
+  const secondDb = openDatabase(join(fixture.directory, "control-room.sqlite"));
+  const secondRepository = new StorageRepository(secondDb);
+  try {
+    fixture.repository.readJob = (() => null) as typeof fixture.repository.readJob;
+    secondRepository.readJob = (() => null) as typeof secondRepository.readJob;
+    fixture.repository.startDiscoveryRun({ id: "run_concurrent_one", sourceId: "connector", scopeHash: "scope", startedAt: "2026-07-13T11:00:00.000Z" });
+    secondRepository.startDiscoveryRun({ id: "run_concurrent_two", sourceId: "connector", scopeHash: "scope", startedAt: "2026-07-13T11:00:00.000Z" });
+
+    const [first, second] = await Promise.all([
+      importVacancy({ text: vacancy, sourceId: "connector:concurrent" }, fixture.repository, { discoveryRunId: "run_concurrent_one", observedAt: "2026-07-13T11:00:00.000Z" }),
+      importVacancy({ text: vacancy, sourceId: "connector:concurrent" }, secondRepository, { discoveryRunId: "run_concurrent_two", observedAt: "2026-07-13T11:00:00.000Z" }),
+    ]);
+    fixture.repository.finishDiscoveryRun("run_concurrent_one", { status: "success", finishedAt: "2026-07-13T11:01:00.000Z" });
+    secondRepository.finishDiscoveryRun("run_concurrent_two", { status: "success", finishedAt: "2026-07-13T11:01:00.000Z" });
+
+    expect([first.reused, second.reused].sort()).toEqual([false, true]);
+    expect(first).toMatchObject({ id: second.id, logicalVacancyId: second.logicalVacancyId, version: 1 });
+    expect(fixture.db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 1 });
+    expect(fixture.db.query("SELECT COUNT(*) AS count FROM vacancy_versions").get()).toEqual({ count: 1 });
+    expect(fixture.db.query("SELECT run_id FROM discovery_observations ORDER BY run_id").all()).toEqual([
+      { run_id: "run_concurrent_one" },
+      { run_id: "run_concurrent_two" },
+    ]);
+    expect(fixture.db.query("SELECT COUNT(*) AS count FROM discovery_runs WHERE status = 'running'").get()).toEqual({ count: 0 });
+  } finally {
+    fixture.db.run("PRAGMA wal_checkpoint(TRUNCATE)");
+    secondDb.close();
+    fixture.db.close();
+    await Bun.sleep(100);
+    await rm(fixture.directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
 test("discovery import rolls back a new source and job when run membership observation fails", async () => {
   const fixture = await repository();
   try {

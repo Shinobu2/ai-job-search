@@ -67,16 +67,39 @@ async function readJson<T>(url: string, options: DiscoveryOptions, label: string
   return parseJson<T>(response, label);
 }
 
-function searchEnvelope(value: Envelope<FreehireJob[]>): FreehireJob[] {
+function searchEnvelope(value: Envelope<unknown[]>): unknown[] {
   if (!value || !Array.isArray(value.data)) throw new ReadFailure("FreeHire returned an invalid search envelope", "invalid_envelope", false);
   return value.data;
 }
 
-function detailEnvelope(value: Envelope<FreehireJob>): FreehireJob {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === "string";
+}
+
+function searchRecord(value: unknown): FreehireJob | null {
+  if (!isRecord(value) || typeof value.public_slug !== "string" || !value.public_slug.trim()) return null;
+  return value as FreehireJob;
+}
+
+function detailEnvelope(value: Envelope<unknown>): FreehireJob {
   if (!value || !value.data || typeof value.data !== "object" || Array.isArray(value.data)) {
     throw new ReadFailure("FreeHire returned an invalid detail envelope", "invalid_envelope", false);
   }
-  return value.data;
+  const job = value.data as Record<string, unknown>;
+  const valid = typeof job.public_slug === "string" && Boolean(job.public_slug.trim())
+    && typeof job.title === "string" && Boolean(job.title.trim())
+    && typeof job.url === "string" && Boolean(job.url.trim())
+    && isOptionalString(job.company)
+    && isOptionalString(job.location)
+    && isOptionalString(job.description)
+    && isOptionalString(job.posted_at)
+    && Array.isArray(job.skills) && job.skills.every((skill) => typeof skill === "string");
+  if (!valid) throw new ReadFailure("FreeHire returned a detail record with invalid field types", "invalid_record", false);
+  return job as FreehireJob;
 }
 
 function canonicalText(job: FreehireJob): string {
@@ -133,7 +156,14 @@ export async function discoverFreehire(
   const completedScopes = new Set<number>();
   const seen = new Map<string, FreehireJob>();
   const rows: DiscoveredJob[] = [];
-  let batch!: DiscoveryBatch;
+  let batch: DiscoveryBatch = {
+    sourceId: source.id,
+    status: "failed",
+    scope: { planned: scopes.length, completed: 0, failed: scopes.length },
+    jobs: [],
+    counters,
+    diagnostics,
+  };
 
   try {
     if (scopes.length === 0) {
@@ -144,7 +174,7 @@ export async function discoverFreehire(
     const pageScopes = scopes.map((scope, index) => ({ scope, index })).filter(({ index }) => active[index]);
     const settled = await mapBounded(pageScopes, CONCURRENCY, async ({ scope }) => {
       const url = searchUrl(source, scope.keyword, scope.city, page);
-      return searchEnvelope(await readJson<Envelope<FreehireJob[]>>(url, options, "FreeHire"));
+      return searchEnvelope(await readJson<Envelope<unknown[]>>(url, options, "FreeHire"));
     });
     settled.forEach((result, resultIndex) => {
       const { scope, index } = pageScopes[resultIndex];
@@ -156,10 +186,11 @@ export async function discoverFreehire(
         diagnostics.push(diagnosticFromError(result.reason, result.reason instanceof ReadFailure && result.reason.code.startsWith("invalid_") ? "parse" : "search", searchUrl(source, scope.keyword, scope.city, page)));
         return;
       }
-      for (const job of result.value) {
-        if (!job?.public_slug) {
+      for (const value of result.value) {
+        const job = searchRecord(value);
+        if (!job) {
           counters.failed += 1;
-          diagnostics.push({ stage: "parse", locator: searchUrl(source, scope.keyword, scope.city, page), code: "invalid_record", message: "FreeHire search record is missing public_slug", transient: false });
+          diagnostics.push({ stage: "parse", locator: searchUrl(source, scope.keyword, scope.city, page), code: "invalid_record", message: "FreeHire search record has an invalid public_slug", transient: false });
         } else if (!seen.has(job.public_slug)) seen.set(job.public_slug, job);
       }
       if (result.value.length < source.page_size || page === source.max_pages) {
@@ -177,7 +208,7 @@ export async function discoverFreehire(
   counters.detailed = summaries.length;
   const details = await mapBounded(summaries, CONCURRENCY, async (summary) => {
     const url = `${FREEHIRE_BASE_URL}/api/v1/jobs/${encodeURIComponent(summary.public_slug)}`;
-    return detailEnvelope(await readJson<Envelope<FreehireJob>>(url, options, "FreeHire"));
+    return detailEnvelope(await readJson<Envelope<unknown>>(url, options, "FreeHire"));
   });
 
   for (let index = 0; index < details.length; index += 1) {
@@ -244,7 +275,7 @@ export async function discoverFreehire(
     counters.failed += 1;
     diagnostics.push({ stage: "parse", locator: source.id, code: "connector_exception", message: error instanceof Error ? error.message : String(error), transient: false });
     const status = discoveryStatus(counters);
-    batch = { sourceId: source.id, status, scope: { planned: scopes.length, completed: completedScopes.size, failed: failedScopes.size }, jobs: sortResults(rows), counters, diagnostics };
+    batch = { sourceId: source.id, status, scope: { planned: scopes.length, completed: completedScopes.size, failed: failedScopes.size }, jobs: [...rows], counters, diagnostics };
   } finally {
     repository.finishDiscoveryRun(runId, { status: batch.status, counters, diagnostics, finishedAt: now() });
   }

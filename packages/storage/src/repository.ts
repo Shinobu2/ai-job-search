@@ -412,16 +412,17 @@ export class StorageRepository {
     return { id: input.job.id, existing: false };
   }
 
-  importJobAndObserve(input: JobImportInput, observation: ObservationInput): { id: string; existing: false; logicalVacancyId: string; version: number } {
+  importJobAndObserve(input: JobImportInput, observation: ObservationInput): { id: string; existing: boolean; logicalVacancyId: string; version: number } {
     this.validateJobImport(input);
     if (observation.jobId !== input.job.id) throw new Error("observation.jobId must reference the imported job");
     if (observation.rawHash !== input.job.rawSnapshotHash) throw new Error("observation.rawHash must match the imported job snapshot");
     const write = this.db.transaction(() => {
-      this.insertJobRows(input);
+      const existing = Boolean(this.db.query("SELECT id FROM jobs WHERE id = ?").get(input.job.id));
+      if (!existing) this.insertJobRows(input);
       const observed = this.observeVacancyRows(observation);
-      return { id: input.job.id, existing: false as const, ...observed };
+      return { id: input.job.id, existing, ...observed };
     });
-    return write.immediate() as { id: string; existing: false; logicalVacancyId: string; version: number };
+    return write.immediate() as { id: string; existing: boolean; logicalVacancyId: string; version: number };
   }
 
   private validateJobImport(input: JobImportInput): void {

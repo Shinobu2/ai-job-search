@@ -48,6 +48,14 @@ test("Personio parser is case-sensitive and rejects unknown or malformed entitie
   expect(() => parsePersonioXml("<workzag-jobs><position><id>42</id><name>R&bogus;</name></position></workzag-jobs>")).toThrow("entity");
 });
 
+test("Personio parser rejects forbidden numeric codepoints and malformed attribute entities", () => {
+  const position = (attribute: string, id: string) => `<workzag-jobs><position ${attribute}><id>${id}</id><name>Technician</name></position></workzag-jobs>`;
+  expect(() => parsePersonioXml(position("source=\"valid\"", "&#0;"))).toThrow("codepoint");
+  expect(() => parsePersonioXml(position("source=\"valid\"", "&#xD800;"))).toThrow("codepoint");
+  expect(() => parsePersonioXml(position("source=\"&bogus;\"", "42"))).toThrow("entity");
+  expect(() => parsePersonioXml(position("source=\"R&D\"", "42"))).toThrow("entity");
+});
+
 test("Personio reader treats missing required position identity and empty XML as parse failures", async () => {
   for (const xml of ["<workzag-jobs><position><office>Frankfurt</office></position></workzag-jobs>", ""]) {
     const batch = await readPersonioEmployer(employer, (async () => new Response(xml, { status: 200 })) as unknown as typeof fetch);
