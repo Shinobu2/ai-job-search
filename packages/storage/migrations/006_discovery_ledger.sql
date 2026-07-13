@@ -34,5 +34,15 @@ CREATE TABLE discovery_observations (
   PRIMARY KEY(run_id, logical_vacancy_id)
 );
 
+CREATE TABLE discovery_memberships (
+  logical_vacancy_id TEXT NOT NULL REFERENCES logical_vacancies(id),
+  source_id TEXT NOT NULL,
+  scope_hash TEXT NOT NULL,
+  consecutive_misses INTEGER NOT NULL DEFAULT 0 CHECK(consecutive_misses >= 0),
+  last_seen_at TEXT NOT NULL,
+  PRIMARY KEY(logical_vacancy_id, source_id, scope_hash)
+);
+
 CREATE INDEX discovery_runs_scope_idx ON discovery_runs(source_id, scope_hash, status);
 CREATE INDEX discovery_observations_vacancy_idx ON discovery_observations(logical_vacancy_id, run_id);
+CREATE INDEX discovery_memberships_scope_idx ON discovery_memberships(source_id, scope_hash, logical_vacancy_id);

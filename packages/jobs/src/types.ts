@@ -10,6 +10,8 @@ export type ImportedJob = {
   id: string;
   reused: boolean;
   sourceHash: string;
+  logicalVacancyId: string;
+  version: number;
   title: string | null;
   company: string | null;
   location: string | null;

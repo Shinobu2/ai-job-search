@@ -7,6 +7,7 @@ import { openDatabase } from "../../packages/storage/src/database";
 import { migrate } from "../../packages/storage/src/migrate";
 import { StorageRepository } from "../../packages/storage/src/repository";
 import { importVacancy } from "../../packages/jobs/src/import";
+import type { ImportedJob } from "../../packages/jobs/src/types";
 
 const fixtureDirectory = join(import.meta.dir, "../fixtures/jobs");
 
@@ -24,6 +25,10 @@ const vacancy = [
   "Skills: Linux",
 ].join("\n");
 
+function canonicalImportedJob(job: ImportedJob): ImportedJob {
+  return job;
+}
+
 test("imports pasted text and preserves its raw source hash", async () => {
   const fixture = await repository();
   try {
@@ -34,7 +39,10 @@ test("imports pasted text and preserves its raw source hash", async () => {
       source_type: string;
     };
 
-    expect(imported).toMatchObject({ reused: false, title: "Platform Technician", company: "Example GmbH", location: "Berlin, Germany" });
+    const typed = canonicalImportedJob(imported);
+    expect(typed).toMatchObject({ reused: false, title: "Platform Technician", company: "Example GmbH", location: "Berlin, Germany" });
+    expect(typed.logicalVacancyId).toMatch(/^vacancy_[a-f0-9]{64}$/);
+    expect(typed.version).toBe(1);
     expect(source).toEqual({
       raw_content: vacancy,
       raw_hash: createHash("sha256").update(vacancy).digest("hex"),
@@ -225,6 +233,26 @@ test("keeps separate stable source IDs separate even when vacancy identity field
     expect(second.logicalVacancyId).not.toBe(first.logicalVacancyId);
     expect(fixture.db.query("SELECT COUNT(*) AS count FROM logical_vacancies").get()).toEqual({ count: 2 });
     expect(fixture.db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 2 });
+  } finally {
+    fixture.db.close();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test("unsupported or invalid canonical URLs fall back without colliding with source IDs", async () => {
+  const fixture = await repository();
+  try {
+    const unsupported = await importVacancy({ text: vacancy, sourceUrl: "source-id:connector:collision" }, fixture.repository);
+    const sourceIdentified = await importVacancy({ text: `${vacancy}\nSkills: Networking`, sourceId: "connector:collision" }, fixture.repository);
+    const invalid = await importVacancy({ text: `${vacancy}\nSkills: Windows`, sourceId: "connector:invalid", sourceUrl: "not a URL" }, fixture.repository);
+
+    expect(sourceIdentified.logicalVacancyId).not.toBe(unsupported.logicalVacancyId);
+    expect(invalid).toMatchObject({ version: 1 });
+    expect(fixture.db.query("SELECT stable_key, canonical_url FROM logical_vacancies ORDER BY stable_key").all()).toEqual([
+      { stable_key: expect.stringMatching(/^[a-f0-9]{64}$/), canonical_url: null },
+      { stable_key: "source-id:connector:collision", canonical_url: null },
+      { stable_key: "source-id:connector:invalid", canonical_url: null },
+    ]);
   } finally {
     fixture.db.close();
     await rm(fixture.directory, { recursive: true, force: true });

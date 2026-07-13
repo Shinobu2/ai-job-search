@@ -274,3 +274,50 @@ test("observing a stale vacancy again resets it to active", async () => {
     fixture.db.close();
   }
 });
+
+test("misses remain isolated per source and scope membership", async () => {
+  const fixture = memoryRepository();
+  const observe = (runId: string, sourceId: string, observedAt: string) => {
+    fixture.repository.startDiscoveryRun({ id: runId, sourceId, scopeHash: "shared-scope", startedAt: observedAt });
+    fixture.repository.observeVacancy({
+      discoveryRunId: runId,
+      jobId: "job_one",
+      stableSourceId: "shared-vacancy",
+      rawHash: sourceHash,
+      observedAt,
+    });
+    fixture.repository.finishDiscoveryRun(runId, { status: "success", finishedAt: observedAt });
+  };
+  const miss = (runId: string, sourceId: string, finishedAt: string) => {
+    fixture.repository.startDiscoveryRun({ id: runId, sourceId, scopeHash: "shared-scope", startedAt: finishedAt });
+    fixture.repository.finishDiscoveryRun(runId, { status: "success", finishedAt });
+  };
+  try {
+    await importJob(fixture.repository);
+    observe("run_a_seen", "source-a", "2026-07-10T00:00:00.000Z");
+    observe("run_b_seen", "source-b", "2026-07-10T01:00:00.000Z");
+
+    miss("run_a_miss_one", "source-a", "2026-07-11T00:00:00.000Z");
+    miss("run_b_miss_one", "source-b", "2026-07-11T01:00:00.000Z");
+    expect(fixture.repository.listCurrentVacancies()[0]).toMatchObject({ consecutiveMisses: 1, lifecycleStatus: "active" });
+    expect(fixture.db.query("SELECT source_id, consecutive_misses FROM discovery_memberships ORDER BY source_id").all()).toEqual([
+      { source_id: "source-a", consecutive_misses: 1 },
+      { source_id: "source-b", consecutive_misses: 1 },
+    ]);
+
+    miss("run_a_miss_two", "source-a", "2026-07-12T00:00:00.000Z");
+    expect(fixture.repository.listCurrentVacancies()[0]).toMatchObject({ consecutiveMisses: 1, lifecycleStatus: "active" });
+
+    miss("run_b_miss_two", "source-b", "2026-07-12T01:00:00.000Z");
+    expect(fixture.repository.listCurrentVacancies()[0]).toMatchObject({ consecutiveMisses: 2, lifecycleStatus: "stale" });
+
+    observe("run_a_seen_again", "source-a", "2026-07-13T00:00:00.000Z");
+    expect(fixture.repository.listCurrentVacancies()[0]).toMatchObject({ consecutiveMisses: 0, lifecycleStatus: "active" });
+    expect(fixture.db.query("SELECT source_id, consecutive_misses FROM discovery_memberships ORDER BY source_id").all()).toEqual([
+      { source_id: "source-a", consecutive_misses: 0 },
+      { source_id: "source-b", consecutive_misses: 2 },
+    ]);
+  } finally {
+    fixture.db.close();
+  }
+});

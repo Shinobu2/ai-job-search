@@ -166,8 +166,14 @@ function requireIsoTimestamp(value: string, label: string): void {
   if (Number.isNaN(Date.parse(value)) || new Date(value).toISOString() !== value) throw new Error(`${label} must be an ISO timestamp`);
 }
 
-function normalizeCanonicalUrl(value: string): string {
-  const url = new URL(value);
+function normalizeCanonicalUrl(value: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
   url.protocol = url.protocol.toLowerCase();
   url.hostname = url.hostname.toLowerCase();
   url.hash = "";
@@ -203,29 +209,35 @@ export class StorageRepository {
       this.db.query("UPDATE discovery_runs SET status = ?, counters_json = ?, diagnostics_json = ?, finished_at = ? WHERE id = ?")
         .run(input.status, JSON.stringify(counters), JSON.stringify(diagnostics), finishedAt, runId);
       this.db.query(
-        `UPDATE logical_vacancies
-         SET consecutive_misses = 0, lifecycle_status = 'active'
-         WHERE id IN (SELECT logical_vacancy_id FROM discovery_observations WHERE run_id = ?)`,
-      ).run(runId);
-      if (input.status !== "success") return;
+        `UPDATE discovery_memberships
+         SET consecutive_misses = 0
+         WHERE source_id = ? AND scope_hash = ?
+           AND logical_vacancy_id IN (SELECT logical_vacancy_id FROM discovery_observations WHERE run_id = ?)`,
+      ).run(run.source_id, run.scope_hash, runId);
+      if (input.status === "success") {
+        this.db.query(
+          `UPDATE discovery_memberships
+           SET consecutive_misses = consecutive_misses + 1
+           WHERE source_id = ? AND scope_hash = ?
+             AND logical_vacancy_id NOT IN (SELECT logical_vacancy_id FROM discovery_observations WHERE run_id = ?)`,
+        ).run(run.source_id, run.scope_hash, runId);
+      }
       this.db.query(
         `UPDATE logical_vacancies AS vacancy
-         SET consecutive_misses = consecutive_misses + 1,
-             lifecycle_status = CASE WHEN consecutive_misses + 1 >= 2 THEN 'stale' ELSE lifecycle_status END
+         SET consecutive_misses = (
+               SELECT MIN(membership.consecutive_misses)
+               FROM discovery_memberships membership
+               WHERE membership.logical_vacancy_id = vacancy.id
+             ),
+             lifecycle_status = CASE WHEN EXISTS (
+               SELECT 1 FROM discovery_memberships membership
+               WHERE membership.logical_vacancy_id = vacancy.id AND membership.consecutive_misses < 2
+             ) THEN 'active' ELSE 'stale' END
          WHERE EXISTS (
-           SELECT 1
-           FROM discovery_observations previous_observation
-           JOIN discovery_runs previous_run ON previous_run.id = previous_observation.run_id
-           WHERE previous_observation.logical_vacancy_id = vacancy.id
-             AND previous_observation.run_id <> ?
-             AND previous_run.source_id = ?
-             AND previous_run.scope_hash = ?
-         )
-         AND NOT EXISTS (
-           SELECT 1 FROM discovery_observations current_observation
-           WHERE current_observation.run_id = ? AND current_observation.logical_vacancy_id = vacancy.id
+           SELECT 1 FROM discovery_memberships membership
+           WHERE membership.logical_vacancy_id = vacancy.id
          )`,
-      ).run(runId, run.source_id, run.scope_hash, runId);
+      ).run();
     });
     write.immediate();
   }
@@ -263,9 +275,15 @@ export class StorageRepository {
       this.db.query("UPDATE logical_vacancies SET last_seen_at = ?, consecutive_misses = 0, lifecycle_status = 'active' WHERE id = ?")
         .run(observedAt, resolvedId);
       if (input.discoveryRunId) {
-        const run = this.db.query("SELECT status FROM discovery_runs WHERE id = ?").get(input.discoveryRunId) as { status: DiscoveryRunStatus } | null;
+        const run = this.db.query("SELECT status, source_id, scope_hash FROM discovery_runs WHERE id = ?").get(input.discoveryRunId) as { status: DiscoveryRunStatus; source_id: string; scope_hash: string } | null;
         if (!run) throw new Error(`Unknown discovery run: ${input.discoveryRunId}`);
         if (run.status !== "running") throw new Error(`Discovery run ${input.discoveryRunId} is already finished`);
+        this.db.query(
+          `INSERT INTO discovery_memberships (logical_vacancy_id, source_id, scope_hash, consecutive_misses, last_seen_at)
+           VALUES (?, ?, ?, 0, ?)
+           ON CONFLICT(logical_vacancy_id, source_id, scope_hash)
+           DO UPDATE SET consecutive_misses = 0, last_seen_at = excluded.last_seen_at`,
+        ).run(resolvedId, run.source_id, run.scope_hash, observedAt);
         this.db.query("INSERT OR IGNORE INTO discovery_observations (run_id, logical_vacancy_id, observed_at) VALUES (?, ?, ?)")
           .run(input.discoveryRunId, resolvedId, observedAt);
       }

@@ -2,9 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import type { StorageRepository, StoredJob } from "../../storage/src/repository";
-import type { ImportRequest, ImportedJob as BaseImportedJob } from "./types";
-
-export type ImportedJob = BaseImportedJob & { logicalVacancyId: string; version: number };
+import type { ImportRequest, ImportedJob } from "./types";
 
 type SourceInput = {
   rawContent: string;
@@ -18,8 +16,14 @@ function hash(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function normalizeUrl(value: string): string {
-  const url = new URL(value);
+function normalizeUrl(value: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
   url.protocol = url.protocol.toLowerCase();
   url.hostname = url.hostname.toLowerCase();
   url.hash = "";
