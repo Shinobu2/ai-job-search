@@ -176,3 +176,57 @@ test("reuses the matching job by raw content hash", async () => {
     await rm(fixture.directory, { recursive: true, force: true });
   }
 });
+
+test("reuses a logical vacancy version for the same stable source and creates version two when content changes", async () => {
+  const fixture = await repository();
+  try {
+    const first = await importVacancy({ text: vacancy, sourceId: "connector:vacancy-42" }, fixture.repository);
+    const repeated = await importVacancy({ text: vacancy, sourceId: "connector:vacancy-42" }, fixture.repository);
+    const changed = await importVacancy({ text: `${vacancy}\nSkills: Networking`, sourceId: "connector:vacancy-42" }, fixture.repository);
+
+    expect(first).toMatchObject({ reused: false, version: 1, logicalVacancyId: expect.stringMatching(/^vacancy_[a-f0-9]{64}$/) });
+    expect(repeated).toMatchObject({ id: first.id, reused: true, logicalVacancyId: first.logicalVacancyId, version: 1 });
+    expect(changed).toMatchObject({ reused: false, logicalVacancyId: first.logicalVacancyId, version: 2 });
+    expect(changed.id).not.toBe(first.id);
+    expect(fixture.db.query("SELECT job_id, version FROM vacancy_versions ORDER BY version").all()).toEqual([
+      { job_id: first.id, version: 1 },
+      { job_id: changed.id, version: 2 },
+    ]);
+  } finally {
+    fixture.db.close();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test("canonical URL takes precedence over stable source ID for logical vacancy identity", async () => {
+  const fixture = await repository();
+  try {
+    const first = await importVacancy({ text: vacancy, sourceId: "connector:first", sourceUrl: "HTTPS://Example.test/jobs/42/" }, fixture.repository);
+    const changed = await importVacancy({ text: `${vacancy}\nSkills: Networking`, sourceId: "connector:second", sourceUrl: "https://example.test/jobs/42" }, fixture.repository);
+
+    expect(changed).toMatchObject({ logicalVacancyId: first.logicalVacancyId, version: 2 });
+    expect(fixture.db.query("SELECT stable_key, canonical_url FROM logical_vacancies").get()).toEqual({
+      stable_key: "https://example.test/jobs/42",
+      canonical_url: "https://example.test/jobs/42",
+    });
+  } finally {
+    fixture.db.close();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test("keeps separate stable source IDs separate even when vacancy identity fields and content match", async () => {
+  const fixture = await repository();
+  try {
+    const first = await importVacancy({ text: vacancy, sourceId: "connector:vacancy-one" }, fixture.repository);
+    const second = await importVacancy({ text: vacancy, sourceId: "connector:vacancy-two" }, fixture.repository);
+
+    expect(second.id).not.toBe(first.id);
+    expect(second.logicalVacancyId).not.toBe(first.logicalVacancyId);
+    expect(fixture.db.query("SELECT COUNT(*) AS count FROM logical_vacancies").get()).toEqual({ count: 2 });
+    expect(fixture.db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 2 });
+  } finally {
+    fixture.db.close();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});

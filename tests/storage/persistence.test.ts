@@ -18,6 +18,12 @@ async function repository() {
   return { directory, path, db, repository: new StorageRepository(db) };
 }
 
+function memoryRepository() {
+  const db = openDatabase(":memory:");
+  migrate(db);
+  return { db, repository: new StorageRepository(db) };
+}
+
 async function importJob(repository: StorageRepository, suffix = "one") {
   return repository.importJob({
     source: {
@@ -202,5 +208,69 @@ test("duplicate run-key lookup is protected by the same immediate transaction as
     secondConnection.close();
     fixture.db.close();
     await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test("failed and partial discovery runs do not age vacancies, while two successful same-scope misses mark stale", async () => {
+  const fixture = memoryRepository();
+  try {
+    await importJob(fixture.repository);
+    fixture.repository.startDiscoveryRun({ id: "run_seen", sourceId: "connector-one", scopeHash: "scope-one", startedAt: "2026-07-11T00:00:00.000Z" });
+    fixture.repository.observeVacancy({
+      discoveryRunId: "run_seen",
+      jobId: "job_one",
+      stableSourceId: "connector-one:vacancy-one",
+      rawHash: sourceHash,
+      observedAt: "2026-07-11T00:01:00.000Z",
+    });
+    fixture.repository.finishDiscoveryRun("run_seen", { status: "success", finishedAt: "2026-07-11T00:02:00.000Z" });
+
+    for (const [id, status] of [["run_failed", "failed"], ["run_partial", "partial"]] as const) {
+      fixture.repository.startDiscoveryRun({ id, sourceId: "connector-one", scopeHash: "scope-one", startedAt: "2026-07-12T00:00:00.000Z" });
+      fixture.repository.finishDiscoveryRun(id, { status, diagnostics: [{ code: status }], finishedAt: "2026-07-12T00:01:00.000Z" });
+    }
+    expect(fixture.repository.listCurrentVacancies()[0]).toMatchObject({ consecutiveMisses: 0, lifecycleStatus: "active" });
+
+    fixture.repository.startDiscoveryRun({ id: "run_miss_one", sourceId: "connector-one", scopeHash: "scope-one", startedAt: "2026-07-13T00:00:00.000Z" });
+    fixture.repository.finishDiscoveryRun("run_miss_one", { status: "success", counters: { imported: 0 }, finishedAt: "2026-07-13T00:01:00.000Z" });
+    expect(fixture.repository.listCurrentVacancies()[0]).toMatchObject({ consecutiveMisses: 1, lifecycleStatus: "active" });
+
+    fixture.repository.startDiscoveryRun({ id: "run_other_scope", sourceId: "connector-one", scopeHash: "scope-other", startedAt: "2026-07-13T01:00:00.000Z" });
+    fixture.repository.finishDiscoveryRun("run_other_scope", { status: "success", finishedAt: "2026-07-13T01:01:00.000Z" });
+    expect(fixture.repository.listCurrentVacancies()[0]).toMatchObject({ consecutiveMisses: 1, lifecycleStatus: "active" });
+
+    fixture.repository.startDiscoveryRun({ id: "run_miss_two", sourceId: "connector-one", scopeHash: "scope-one", startedAt: "2026-07-14T00:00:00.000Z" });
+    fixture.repository.finishDiscoveryRun("run_miss_two", { status: "success", finishedAt: "2026-07-14T00:01:00.000Z" });
+    expect(fixture.repository.listCurrentVacancies()[0]).toMatchObject({
+      logicalVacancyId: expect.stringMatching(/^vacancy_[a-f0-9]{64}$/),
+      jobId: "job_one",
+      version: 1,
+      consecutiveMisses: 2,
+      lifecycleStatus: "stale",
+    });
+    expect(fixture.db.query("SELECT status, counters_json, diagnostics_json, finished_at FROM discovery_runs WHERE id = 'run_failed'").get()).toEqual({
+      status: "failed",
+      counters_json: "{}",
+      diagnostics_json: '[{"code":"failed"}]',
+      finished_at: "2026-07-12T00:01:00.000Z",
+    });
+  } finally {
+    fixture.db.close();
+  }
+});
+
+test("observing a stale vacancy again resets it to active", async () => {
+  const fixture = memoryRepository();
+  try {
+    await importJob(fixture.repository);
+    fixture.repository.observeVacancy({ jobId: "job_one", stableSourceId: "connector-one:vacancy-one", rawHash: sourceHash, observedAt: "2026-07-11T00:00:00.000Z" });
+    fixture.db.run("UPDATE logical_vacancies SET consecutive_misses = 2, lifecycle_status = 'stale'");
+
+    const observed = fixture.repository.observeVacancy({ jobId: "job_one", stableSourceId: "connector-one:vacancy-one", rawHash: sourceHash, observedAt: "2026-07-12T00:00:00.000Z" });
+
+    expect(observed.version).toBe(1);
+    expect(fixture.repository.listCurrentVacancies()[0]).toMatchObject({ consecutiveMisses: 0, lifecycleStatus: "active", lastSeenAt: "2026-07-12T00:00:00.000Z" });
+  } finally {
+    fixture.db.close();
   }
 });

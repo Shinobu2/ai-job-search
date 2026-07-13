@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import type { StorageRepository, StoredJob } from "../../storage/src/repository";
-import type { ImportRequest, ImportedJob } from "./types";
+import type { ImportRequest, ImportedJob as BaseImportedJob } from "./types";
+
+export type ImportedJob = BaseImportedJob & { logicalVacancyId: string; version: number };
 
 type SourceInput = {
   rawContent: string;
@@ -130,22 +132,23 @@ async function sourceFrom(request: ImportRequest): Promise<SourceInput> {
   };
 }
 
-function asImported(job: StoredJob, sourceHash: string, reused: boolean): ImportedJob {
-  return { id: job.id, reused, sourceHash, title: job.title, company: job.company, location: job.location };
+function asImported(job: StoredJob, sourceHash: string, reused: boolean, logicalVacancyId: string, version: number): ImportedJob {
+  return { id: job.id, reused, sourceHash, title: job.title, company: job.company, location: job.location, logicalVacancyId, version };
 }
 
 export async function importVacancy(request: ImportRequest, repository: StorageRepository): Promise<ImportedJob> {
   const source = await sourceFrom(request);
   const canonicalUrl = request.sourceUrl ? normalizeUrl(request.sourceUrl) : undefined;
   const values = identity(source.extractionText);
-  // Raw content is the immutable snapshot identity. A stable URL, vendor ID, or
-  // title/company/location triple may legitimately publish revised or parallel
-  // vacancies and must not silently return stale requirements.
-  const existing = repository.findJobByRawHash(source.rawHash);
-  if (existing) return asImported(existing, source.rawHash, true);
+  const stableKey = canonicalUrl ?? (request.sourceId ? `source-id:${request.sourceId}` : source.rawHash);
+  const sourceId = `source_${hash(`source:${stableKey}:${source.rawHash}`)}`;
+  const jobId = `job_${hash(`job:${stableKey}:${source.rawHash}`)}`;
+  const existing = repository.readJob(jobId);
+  if (existing) {
+    const observed = repository.observeVacancy({ jobId, rawHash: source.rawHash, canonicalUrl, stableSourceId: request.sourceId });
+    return asImported(existing, source.rawHash, true, observed.logicalVacancyId, observed.version);
+  }
 
-  const sourceId = `source_${hash(`source:${source.rawHash}`)}`;
-  const jobId = `job_${hash(`job:${source.rawHash}`)}`;
   repository.importJob({
     source: {
       id: sourceId,
@@ -167,5 +170,6 @@ export async function importVacancy(request: ImportRequest, repository: StorageR
       provenance: [{ source_type: "local_import", source_ref: source.sourceLocator ?? "pasted_text" }],
     },
   });
-  return { id: jobId, reused: false, sourceHash: source.rawHash, ...values };
+  const observed = repository.observeVacancy({ jobId, rawHash: source.rawHash, canonicalUrl, stableSourceId: request.sourceId });
+  return { id: jobId, reused: false, sourceHash: source.rawHash, ...values, logicalVacancyId: observed.logicalVacancyId, version: observed.version };
 }
