@@ -57,8 +57,18 @@ function explicitlyNoOwnCarRequired(text: string): boolean {
   return /\bno own car required\b|\b(?:own )?car (?:is )?not required\b/i.test(text);
 }
 
+function mandatoryOwnCarRequired(text: string): boolean {
+  const withoutNegations = text.replace(/\bno own car required\b|\b(?:own )?car (?:is )?not required\b/gi, "");
+  return /\bown car required\b/i.test(withoutNegations);
+}
+
 function explicitlyNoHeavyWorkRequired(text: string): boolean {
   return /\bno (?:continuous )?heavy (?:work|labou?r|lifting)(?: is)? required\b|\b(?:continuous )?heavy (?:work|labou?r|lifting) (?:is )?not required\b/i.test(text);
+}
+
+function mandatoryHeavyWorkRequired(text: string): boolean {
+  const withoutNegations = text.replace(/\bno (?:continuous )?heavy (?:work|labou?r|lifting)(?: is)? required\b|\b(?:continuous )?heavy (?:work|labou?r|lifting) (?:is )?not required\b/gi, "");
+  return /continuous heavy|heavy labour|heavy labor/i.test(withoutNegations);
 }
 
 function explicitlyNoGermanRequirement(text: string): boolean {
@@ -109,19 +119,19 @@ function gatesFor(archetype: EvaluationResult["archetype"], extracted: Extracted
           : includes(shift, /night|rotating/i) ? gate("shift", "PASS_WITH_RISK", true, "Night or rotating shifts need confirmation")
           : gate("shift", "PASS", true, "No night or rotating shift requirement"),
     transport: !car || placeholder(car) ? gate("transport", "VERIFY", true, "Transport requirements are unknown")
-      : explicitlyNoOwnCarRequired(car) ? gate("transport", "PASS", false, "Posting explicitly states that no own car is required")
-        : includes(car, /own car required/i) && verified(profile.transport?.has_car) && profile.transport?.has_car.value === false
+      : mandatoryOwnCarRequired(car) && verified(profile.transport?.has_car) && profile.transport?.has_car.value === false
           ? gate("transport", "BLOCKED", true, "Own car is required but verified unavailable", ["profile.transport.has_car"])
-          : includes(car, /own car required/i) && verified(profile.transport?.has_car) && profile.transport?.has_car.value === true
+          : mandatoryOwnCarRequired(car) && verified(profile.transport?.has_car) && profile.transport?.has_car.value === true
             ? gate("transport", "PASS", true, "Verified own car meets the requirement", ["profile.transport.has_car"])
-            : includes(car, /own car required/i) ? gate("transport", "VERIFY", true, "Own-car requirement needs verification")
-              : gate("transport", "VERIFY", true, "Transport requirement needs confirmation"),
+            : mandatoryOwnCarRequired(car) ? gate("transport", "VERIFY", true, "Own-car requirement needs verification")
+              : explicitlyNoOwnCarRequired(car) ? gate("transport", "PASS", false, "Posting explicitly states that no own car is required")
+                : gate("transport", "VERIFY", true, "Transport requirement needs confirmation"),
     physical: !physical || placeholder(physical) ? gate("physical", "VERIFY", true, "Physical requirements are unknown")
-      : explicitlyNoHeavyWorkRequired(physical) ? gate("physical", "PASS", false, "Posting explicitly states that continuous heavy work is not required")
-        : includes(physical, /continuous heavy|heavy labour|heavy labor/i) && verified(profile.constraints?.continuous_heavy_work) && profile.constraints?.continuous_heavy_work.value === "blocked"
+      : mandatoryHeavyWorkRequired(physical) && verified(profile.constraints?.continuous_heavy_work) && profile.constraints?.continuous_heavy_work.value === "blocked"
           ? gate("physical", "BLOCKED", true, "Continuous heavy work conflicts with a verified constraint", ["profile.constraints.continuous_heavy_work"])
-          : includes(physical, /continuous heavy|heavy labour|heavy labor/i) ? gate("physical", "VERIFY", true, "Physical requirement needs confirmation")
-            : gate("physical", "VERIFY", true, "Physical requirement needs confirmation"),
+          : mandatoryHeavyWorkRequired(physical) ? gate("physical", "VERIFY", true, "Physical requirement needs confirmation")
+            : explicitlyNoHeavyWorkRequired(physical) ? gate("physical", "PASS", false, "Posting explicitly states that continuous heavy work is not required")
+              : gate("physical", "VERIFY", true, "Physical requirement needs confirmation"),
     scope: !skills || placeholder(skills) ? gate("scope", "VERIFY", true, "Role scope is unknown")
       : includes(skills, /warehouse|conveyor/i) ? gate("scope", "BLOCKED", true, "Warehouse or conveyor work is outside scope", ["posting.skills"])
         : gate("scope", "PASS", false, "No warehouse or conveyor requirement"),

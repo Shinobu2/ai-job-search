@@ -245,6 +245,15 @@ test("passes explicit transport, physical, and language non-requirements", async
   expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "PASS", critical: false }));
 });
 
+test("does not let mixed transport or physical wording hide mandatory requirements", async () => {
+  const result = await evaluateText("# Hardware Technician\nCar: No own car required for office work; own car required for field visits\nPhysical: No continuous heavy work required during training; continuous heavy lifting required afterward\n");
+
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "transport", status: "BLOCKED", critical: true }));
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "physical", status: "BLOCKED", critical: true }));
+  expect(result.gates.find((gate) => gate.id === "transport")?.status).not.toBe("PASS");
+  expect(result.gates.find((gate) => gate.id === "physical")?.status).not.toBe("PASS");
+});
+
 test("keeps an unreliable deadline VERIFY rather than treating it as current", async () => {
   const result = await evaluateText("# Hardware Technician\nDeadline: TBD\n");
 
