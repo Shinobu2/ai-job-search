@@ -43,9 +43,14 @@ test("documents CLI hashes written artifacts and records the packet attestation"
     expect((await run(directory, ["job", "evaluate", "--id", id])).code).toBe(0);
     const generated = await run(directory, ["documents", "generate", "--id", id]);
     expect(generated.code).toBe(0);
-    const result = JSON.parse(generated.stdout) as { packet_id: string; hashes: Record<string, string> };
-    const metadata = JSON.parse(await readFile(join(directory, "workspace", "documents", id, "metadata.json"), "utf8")) as { packet_id: string; artifact_hashes: Record<string, string> };
+    const result = JSON.parse(generated.stdout) as { packet_id: string; directory: string; hashes: Record<string, string> };
+    expect(result.directory).toBe(`workspace/documents/${id}/${result.packet_id}`);
+    const metadataPath = join(directory, ...result.directory.split("/"), "metadata.json");
+    const metadataBytes = await readFile(metadataPath);
+    const metadata = JSON.parse(metadataBytes.toString("utf8")) as { packet_id: string; job_snapshot_hash: string; evaluation_run_id: string; artifact_hashes: Record<string, string> };
     expect(metadata.packet_id).toBe(result.packet_id);
+    expect(metadata.job_snapshot_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(metadata.evaluation_run_id).toMatch(/^evaluation_/);
     expect(Object.keys(metadata.artifact_hashes).sort()).toEqual(["english_cover_letter", "english_cv", "german_cover_letter", "german_cv"]);
     expect(Object.values(result.hashes).every((hash) => /^[a-f0-9]{64}$/.test(hash))).toBe(true);
     const db = openDatabase(join(directory, "workspace", "control-room.sqlite"));
@@ -53,6 +58,12 @@ test("documents CLI hashes written artifacts and records the packet attestation"
       migrate(db);
       expect(new StorageRepository(db).readCurrentDocumentPacket(id)).toMatchObject({ id: result.packet_id, artifactHashes: result.hashes });
     } finally { db.close(); }
+
+    const generatedAgain = await run(directory, ["documents", "generate", "--id", id]);
+    expect(generatedAgain.code).toBe(0);
+    const second = JSON.parse(generatedAgain.stdout) as { packet_id: string; directory: string };
+    expect(second.directory).not.toBe(result.directory);
+    expect(await readFile(metadataPath)).toEqual(metadataBytes);
   } finally {
     await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
   }

@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { Database } from "bun:sqlite";
 import type { EvaluationResult, EvidenceMapping, Gate } from "../../jobs/src/types";
 
@@ -74,6 +77,8 @@ export type ApplicationOptions = { nextAction?: string; documentDir?: string; ac
 export type DocumentPacketInput = {
   id: string;
   jobId: string;
+  jobSnapshotHash: string;
+  evaluationRunId: string;
   evaluationFingerprint: string;
   evidenceSnapshotHash: string;
   artifactHashes: Record<string, string>;
@@ -81,9 +86,17 @@ export type DocumentPacketInput = {
   directory: string;
 };
 export type DocumentPacketRecord = DocumentPacketInput & { createdAt: string };
+export type EvaluationAttestation = { evaluationRunId: string; evaluationFingerprint: string; evidenceSnapshotHash: string | null };
 export type DailyActivity = { imported: number; evaluated: number; application_events: number; statuses: Record<string, number> };
 
 const hashPattern = /^[a-f0-9]{64}$/;
+const packetArtifactFiles = {
+  english_cv: "cv-en.md",
+  german_cv: "cv-de.md",
+  english_cover_letter: "cover-letter-en.md",
+  german_cover_letter: "cover-letter-de.md",
+  metadata: "metadata.json",
+} as const;
 
 function isProvenance(value: unknown): value is ProvenanceSnapshot[] {
   return Array.isArray(value) && value.every((entry) => typeof entry?.source_type === "string" && typeof entry?.source_ref === "string");
@@ -102,7 +115,7 @@ function now(): string {
 }
 
 export class StorageRepository {
-  constructor(private readonly db: Database) {}
+  constructor(private readonly db: Database, private readonly workspaceRoot?: string) {}
 
   findJobByCanonicalUrl(canonicalUrl: string): StoredJob | null {
     return this.db.query("SELECT j.id, j.title, j.company, j.location FROM jobs j JOIN job_sources s ON s.id = j.source_id WHERE s.supplied_url = ?").get(canonicalUrl) as StoredJob | null;
@@ -130,7 +143,7 @@ export class StorageRepository {
   }
 
   readEvaluation(jobId: string): EvaluationResult | null {
-    const run = this.db.query("SELECT id, semantic_fingerprint FROM evaluation_runs WHERE job_id = ? ORDER BY created_at DESC, id DESC LIMIT 1").get(jobId) as { id: string; semantic_fingerprint: string } | null;
+    const run = this.db.query("SELECT id, semantic_fingerprint FROM evaluation_runs WHERE job_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(jobId) as { id: string; semantic_fingerprint: string } | null;
     if (!run) return null;
 
     const rows = <T>(table: string): T[] => this.db.query(`SELECT payload_json FROM ${table} WHERE evaluation_run_id = ? ORDER BY rowid`).all(run.id)
@@ -177,6 +190,14 @@ export class StorageRepository {
       verdict: recommendation.verdict,
       fingerprint: run.semantic_fingerprint,
     };
+  }
+
+  readCurrentEvaluationAttestation(jobId: string): EvaluationAttestation | null {
+    const run = this.db.query("SELECT id, semantic_fingerprint FROM evaluation_runs WHERE job_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(jobId) as { id: string; semantic_fingerprint: string } | null;
+    if (!run) return null;
+    const hashes = (this.db.query("SELECT DISTINCT evidence_snapshot_hash FROM evidence_mappings WHERE evaluation_run_id = ?").all(run.id) as Array<{ evidence_snapshot_hash: string }>).map((row) => row.evidence_snapshot_hash);
+    if (hashes.length > 1) throw new Error(`Evaluation ${run.id} has inconsistent evidence snapshots`);
+    return { evaluationRunId: run.id, evaluationFingerprint: run.semantic_fingerprint, evidenceSnapshotHash: hashes[0] ?? null };
   }
 
   importJob(input: JobImportInput): { id: string; existing: boolean } {
@@ -260,11 +281,13 @@ export class StorageRepository {
     requireValue(input.id, "documentPacket.id");
     requireValue(input.jobId, "documentPacket.jobId");
     requireValue(input.directory, "documentPacket.directory");
+    requireValue(input.evaluationRunId, "documentPacket.evaluationRunId");
+    requireHash(input.jobSnapshotHash, "documentPacket.jobSnapshotHash");
     requireHash(input.evaluationFingerprint, "documentPacket.evaluationFingerprint");
     requireHash(input.evidenceSnapshotHash, "documentPacket.evidenceSnapshotHash");
     if (typeof input.ready !== "boolean") throw new Error("documentPacket.ready must be a boolean");
     const artifactEntries = Object.entries(input.artifactHashes);
-    const requiredSlots = ["english_cv", "german_cv", "english_cover_letter", "german_cover_letter", "metadata"];
+    const requiredSlots = Object.keys(packetArtifactFiles);
     if (artifactEntries.length !== requiredSlots.length || requiredSlots.some((slot) => !(slot in input.artifactHashes))) {
       throw new Error("documentPacket requires metadata and four artifact hashes");
     }
@@ -272,18 +295,21 @@ export class StorageRepository {
       requireValue(slot, "documentPacket artifact slot");
       requireHash(hash, `documentPacket.artifactHashes.${slot}`);
     }
-    if (!this.readJob(input.jobId)) throw new Error(`Unknown job ID: ${input.jobId}`);
-    const evaluation = this.db.query("SELECT id FROM evaluation_runs WHERE job_id = ? AND semantic_fingerprint = ?").get(input.jobId, input.evaluationFingerprint) as { id: string } | null;
-    if (!evaluation) throw new Error("document packet requires a persisted matching evaluation");
+    const job = this.readJob(input.jobId);
+    if (!job) throw new Error(`Unknown job ID: ${input.jobId}`);
+    if (job.rawSnapshotHash !== input.jobSnapshotHash) throw new Error("document packet requires the matching job snapshot");
+    const evaluation = this.db.query("SELECT id FROM evaluation_runs WHERE id = ? AND job_id = ? AND semantic_fingerprint = ?").get(input.evaluationRunId, input.jobId, input.evaluationFingerprint) as { id: string } | null;
+    if (!evaluation) throw new Error("document packet requires the matching evaluation run");
     const evidenceHashes = (this.db.query("SELECT DISTINCT evidence_snapshot_hash FROM evidence_mappings WHERE evaluation_run_id = ?").all(evaluation.id) as Array<{ evidence_snapshot_hash: string }>).map((row) => row.evidence_snapshot_hash);
     if ((input.ready && evidenceHashes.length === 0) || evidenceHashes.some((hash) => hash !== input.evidenceSnapshotHash)) {
       throw new Error("document packet requires the matching evidence snapshot");
     }
+    if (this.workspaceRoot) this.resolvePacketDirectory(input.directory, false, input.jobId, input.id);
 
     const createdAt = now();
     const write = this.db.transaction(() => {
-      this.db.query("INSERT INTO document_packets (id, job_id, evaluation_fingerprint, evidence_snapshot_hash, artifact_hashes_json, ready, directory, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(input.id, input.jobId, input.evaluationFingerprint, input.evidenceSnapshotHash, JSON.stringify(input.artifactHashes), input.ready ? 1 : 0, input.directory, createdAt);
+      this.db.query("INSERT INTO document_packets (id, job_id, job_snapshot_hash, evaluation_run_id, evaluation_fingerprint, evidence_snapshot_hash, artifact_hashes_json, ready, directory, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(input.id, input.jobId, input.jobSnapshotHash, input.evaluationRunId, input.evaluationFingerprint, input.evidenceSnapshotHash, JSON.stringify(input.artifactHashes), input.ready ? 1 : 0, input.directory, createdAt);
       this.event("document_packet.recorded", "document_packet", input.id, "system", null, null, { job_id: input.jobId, ready: input.ready });
     });
     write.immediate();
@@ -291,13 +317,15 @@ export class StorageRepository {
   }
 
   readCurrentDocumentPacket(jobId: string): DocumentPacketRecord | null {
-    const row = this.db.query("SELECT * FROM document_packets WHERE job_id = ? ORDER BY created_at DESC, id DESC LIMIT 1").get(jobId) as {
-      id: string; job_id: string; evaluation_fingerprint: string; evidence_snapshot_hash: string; artifact_hashes_json: string; ready: number; directory: string; created_at: string;
+    const row = this.db.query("SELECT * FROM document_packets WHERE job_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(jobId) as {
+      id: string; job_id: string; job_snapshot_hash: string; evaluation_run_id: string; evaluation_fingerprint: string; evidence_snapshot_hash: string; artifact_hashes_json: string; ready: number; directory: string; created_at: string;
     } | null;
     if (!row) return null;
     return {
       id: row.id,
       jobId: row.job_id,
+      jobSnapshotHash: row.job_snapshot_hash,
+      evaluationRunId: row.evaluation_run_id,
       evaluationFingerprint: row.evaluation_fingerprint,
       evidenceSnapshotHash: row.evidence_snapshot_hash,
       artifactHashes: JSON.parse(row.artifact_hashes_json) as Record<string, string>,
@@ -327,11 +355,17 @@ export class StorageRepository {
 
     let documentDir = options.documentDir;
     if (status === "ready_for_review") {
-      const latestEvaluation = this.db.query("SELECT semantic_fingerprint FROM evaluation_runs WHERE job_id = ? ORDER BY created_at DESC, id DESC LIMIT 1").get(jobId) as { semantic_fingerprint: string } | null;
+      const job = this.readJob(jobId);
+      const latestEvaluation = this.readCurrentEvaluationAttestation(jobId);
       const packet = this.readCurrentDocumentPacket(jobId);
-      if (!latestEvaluation || !packet || !packet.ready || packet.evaluationFingerprint !== latestEvaluation.semantic_fingerprint) {
+      if (!job || !latestEvaluation || !packet || !packet.ready
+        || packet.jobSnapshotHash !== job.rawSnapshotHash
+        || packet.evaluationRunId !== latestEvaluation.evaluationRunId
+        || packet.evaluationFingerprint !== latestEvaluation.evaluationFingerprint
+        || packet.evidenceSnapshotHash !== latestEvaluation.evidenceSnapshotHash) {
         throw new Error("ready_for_review requires an attested current document packet");
       }
+      this.verifyPacketArtifacts(packet);
       documentDir = packet.directory;
     }
     const timestamp = now();
@@ -377,6 +411,49 @@ export class StorageRepository {
     }
     if (mapping.credit !== undefined && (!Number.isInteger(mapping.credit) || mapping.credit < 0 || mapping.credit > 100)) {
       throw new Error("evidenceMapping.credit must be an integer from 0 to 100");
+    }
+  }
+
+  private resolvePacketDirectory(directory: string, requireExisting: boolean, jobId: string, packetId: string): string {
+    if (!this.workspaceRoot) throw new Error("ready_for_review requires a workspace root for artifact verification");
+    const documentsRoot = resolve(this.workspaceRoot, "workspace", "documents");
+    const packetDirectory = resolve(this.workspaceRoot, directory);
+    const relativeDirectory = relative(documentsRoot, packetDirectory);
+    if (!relativeDirectory || relativeDirectory === ".." || relativeDirectory.startsWith(`..${sep}`) || isAbsolute(relativeDirectory)) {
+      throw new Error("document packet requires a safe workspace documents directory");
+    }
+    if (relative(resolve(documentsRoot, jobId, packetId), packetDirectory) !== "") {
+      throw new Error("document packet requires its packet-specific document directory");
+    }
+    if (!requireExisting) return packetDirectory;
+    let realDocumentsRoot: string;
+    let realPacketDirectory: string;
+    try {
+      realDocumentsRoot = realpathSync(documentsRoot);
+      realPacketDirectory = realpathSync(packetDirectory);
+    } catch {
+      throw new Error("document packet artifact file is missing");
+    }
+    const realRelative = relative(realDocumentsRoot, realPacketDirectory);
+    if (!realRelative || realRelative === ".." || realRelative.startsWith(`..${sep}`) || isAbsolute(realRelative) || lstatSync(packetDirectory).isSymbolicLink()) {
+      throw new Error("document packet requires a safe workspace documents directory");
+    }
+    return realPacketDirectory;
+  }
+
+  private verifyPacketArtifacts(packet: DocumentPacketRecord): void {
+    const directory = this.resolvePacketDirectory(packet.directory, true, packet.jobId, packet.id);
+    for (const [slot, file] of Object.entries(packetArtifactFiles)) {
+      const path = resolve(directory, file);
+      let contents: Buffer;
+      try {
+        if (lstatSync(path).isSymbolicLink()) throw new Error("symlink");
+        contents = readFileSync(path);
+      } catch {
+        throw new Error(`document packet artifact file is missing: ${slot}`);
+      }
+      const actualHash = createHash("sha256").update(contents).digest("hex");
+      if (actualHash !== packet.artifactHashes[slot]) throw new Error(`document packet artifact hash mismatch: ${slot}`);
     }
   }
 

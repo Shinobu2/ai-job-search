@@ -3,7 +3,7 @@ import { setupWorkspace } from "./setup";
 import { createHash, randomUUID } from "node:crypto";
 import { parse } from "yaml";
 import { readFile } from "node:fs/promises";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { CapabilityRegistry } from "../packages/storage/src/capabilities";
 import { openDatabase } from "../packages/storage/src/database";
@@ -13,7 +13,7 @@ import { extractVacancy } from "../packages/jobs/src/extract";
 import { buildEvaluationInput, evaluateVacancy } from "../packages/jobs/src/evaluate";
 import { importVacancy } from "../packages/jobs/src/import";
 import { renderResultCard } from "../packages/jobs/src/card";
-import { StorageRepository, type ApplicationStatus, type StoredJob } from "../packages/storage/src/repository";
+import { StorageRepository, type ApplicationStatus, type DocumentPacketRecord, type StoredJob } from "../packages/storage/src/repository";
 import { discoverFreehire, type FreehireSourceConfig } from "../packages/search/src/freehire";
 import { discoverJobsuche, type JobsucheSourceConfig } from "../packages/search/src/jobsuche";
 import { loadEmployerRegistry } from "../packages/search/src/employer-registry";
@@ -49,7 +49,7 @@ function requireOnly(flags: JobFlags, allowed: Array<keyof JobFlags>, command: s
 function openRepository(root: string): { db: ReturnType<typeof openDatabase>; repository: StorageRepository } {
   const db = openDatabase(join(root, "workspace", "control-room.sqlite"));
   migrate(db);
-  return { db, repository: new StorageRepository(db) };
+  return { db, repository: new StorageRepository(db, root) };
 }
 
 async function writeExport(root: string, jobId: string, value: unknown): Promise<string> {
@@ -184,11 +184,15 @@ async function runDocuments(root: string, command: string | undefined, arguments
   try {
     const job = repository.readJob(flags.id);
     const evaluation = repository.readEvaluation(flags.id);
-    if (!job || !evaluation) throw new Error(`Evaluated job is unavailable: ${flags.id}`);
+    const evaluationAttestation = repository.readCurrentEvaluationAttestation(flags.id);
+    if (!job || !evaluation || !evaluationAttestation) throw new Error(`Evaluated job is unavailable: ${flags.id}`);
     const packet = generateDocumentPacket({ title: job.title ?? "Unknown role", company: job.company ?? "Unknown company", evaluation, workspace: workspace as never });
-    const directory = join(root, "workspace", "documents", flags.id);
-    const relativeDirectory = join("workspace", "documents", flags.id).replace(/\\/g, "/");
-    await mkdir(directory, { recursive: true });
+    const packetId = `packet_${randomUUID()}`;
+    const parentDirectory = join(root, "workspace", "documents", flags.id);
+    const directory = join(parentDirectory, packetId);
+    const stagingDirectory = join(parentDirectory, `.${packetId}.tmp`);
+    const relativeDirectory = join("workspace", "documents", flags.id, packetId).replace(/\\/g, "/");
+    await mkdir(parentDirectory, { recursive: true });
     const artifacts = {
       english_cv: { file: "cv-en.md", contents: `${packet.englishCv}\n` },
       german_cv: { file: "cv-de.md", contents: `${packet.germanCv}\n` },
@@ -197,10 +201,10 @@ async function runDocuments(root: string, command: string | undefined, arguments
     };
     const artifactHashes = Object.fromEntries(Object.entries(artifacts).map(([slot, artifact]) => [slot, sha256(artifact.contents)]));
     const evidenceSnapshotHash = hashEvidenceSnapshot((workspace as { evidence: unknown }).evidence);
-    const packetId = `packet_${randomUUID()}`;
     const metadata = {
       packet_id: packetId,
       job_snapshot_hash: job.rawSnapshotHash,
+      evaluation_run_id: evaluationAttestation.evaluationRunId,
       evaluation_fingerprint: evaluation.fingerprint,
       evidence_snapshot_hash: evidenceSnapshotHash,
       artifact_hashes: artifactHashes,
@@ -208,19 +212,34 @@ async function runDocuments(root: string, command: string | undefined, arguments
       missing: packet.missing,
     };
     const metadataContents = `${JSON.stringify(metadata, null, 2)}\n`;
-    await Promise.all([
-      ...Object.values(artifacts).map((artifact) => writeFile(join(directory, artifact.file), artifact.contents, "utf8")),
-      writeFile(join(directory, "metadata.json"), metadataContents, "utf8"),
-    ]);
-    const storedPacket = repository.recordDocumentPacket({
-      id: packetId,
-      jobId: flags.id,
-      evaluationFingerprint: evaluation.fingerprint,
-      evidenceSnapshotHash,
-      artifactHashes: { ...artifactHashes, metadata: sha256(metadataContents) },
-      ready: packet.ready_for_submission,
-      directory: relativeDirectory,
-    });
+    let promoted = false;
+    let recorded = false;
+    let storedPacket: DocumentPacketRecord;
+    try {
+      await mkdir(stagingDirectory);
+      await Promise.all([
+        ...Object.values(artifacts).map((artifact) => writeFile(join(stagingDirectory, artifact.file), artifact.contents, "utf8")),
+        writeFile(join(stagingDirectory, "metadata.json"), metadataContents, "utf8"),
+      ]);
+      await rename(stagingDirectory, directory);
+      promoted = true;
+      storedPacket = repository.recordDocumentPacket({
+        id: packetId,
+        jobId: flags.id,
+        jobSnapshotHash: job.rawSnapshotHash,
+        evaluationRunId: evaluationAttestation.evaluationRunId,
+        evaluationFingerprint: evaluation.fingerprint,
+        evidenceSnapshotHash,
+        artifactHashes: { ...artifactHashes, metadata: sha256(metadataContents) },
+        ready: packet.ready_for_submission,
+        directory: relativeDirectory,
+      });
+      recorded = true;
+    } catch (error) {
+      await rm(stagingDirectory, { recursive: true, force: true });
+      if (promoted && !recorded) await rm(directory, { recursive: true, force: true });
+      throw error;
+    }
     console.log(JSON.stringify({ job_id: flags.id, packet_id: storedPacket.id, directory: relativeDirectory, ready_for_submission: packet.ready_for_submission, missing: packet.missing, hashes: storedPacket.artifactHashes }, null, 2));
   } finally {
     db.close();

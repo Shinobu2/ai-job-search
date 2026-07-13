@@ -23,7 +23,7 @@ test("migrations create the Stage 1 schema, enforce foreign keys, and are repeat
     expect(db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'event_history'").get()).toBeDefined();
     expect(db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'document_packets'").get()).toBeDefined();
     expect((db.query("PRAGMA table_info(document_packets)").all() as Array<{ name: string }>).map((column) => column.name)).toEqual([
-      "id", "job_id", "evaluation_fingerprint", "evidence_snapshot_hash", "artifact_hashes_json", "ready", "directory", "created_at",
+      "id", "job_id", "job_snapshot_hash", "evaluation_run_id", "evaluation_fingerprint", "evidence_snapshot_hash", "artifact_hashes_json", "ready", "directory", "created_at",
     ]);
     expect(() =>
       db.run(

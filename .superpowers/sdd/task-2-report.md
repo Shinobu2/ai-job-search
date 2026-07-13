@@ -73,3 +73,79 @@ forged `metadata.json` readiness boolean was accepted by the CLI.
   hash is stored in the database and CLI result rather than recursively inside
   itself.
 - No open Task 2 correctness concern was found in the final diff review.
+
+---
+
+## Attestation review correction
+
+### Findings reproduced
+
+Review against `d37602f` confirmed five related gaps:
+
+1. Migration 005 stored only a job ID and evaluation fingerprint, not the exact
+   job snapshot hash or evaluation-run ID. The real workspace database had only
+   migrations 001-004 applied, so migration 005 remained safe to amend without
+   causing a checksum mismatch.
+2. `ready_for_review` trusted packet-row hashes without reading the current
+   artifact bytes. Modified or missing files therefore remained review-ready.
+3. Packet directories were caller-controlled and were not confined to the
+   exact `workspace/documents/<job-id>/<packet-id>` directory.
+4. A newer evaluation run with the same semantic fingerprint did not stale the
+   earlier packet because only the fingerprint was compared.
+5. Document generation wrote directly into one mutable per-job directory, so a
+   later generation replaced the bytes referenced by an earlier packet.
+
+### Review RED
+
+Command:
+
+```powershell
+bun test tests/storage/migrations.test.ts tests/tracking/tracking.test.ts tests/tracking/cli.test.ts
+```
+
+Result: exited 1 with **4 pass, 5 fail, and 26 expectations**. The failures
+showed the missing schema columns, shared mutable output directory, acceptance
+of a forged job snapshot, acceptance of modified artifact bytes, and acceptance
+of a stale evaluation run whose fingerprint matched the latest run.
+
+Self-review then added a cross-job packet-directory regression. Its targeted RED
+run exited 1 with **0 pass, 1 fail, 4 filtered tests, and 4 expectations** because
+a packet for job `j` could point at `workspace/documents/other/packet-z`.
+
+### Correction
+
+- Migration 005 now persists `job_snapshot_hash` and the foreign-keyed
+  `evaluation_run_id` in addition to the fingerprint and evidence snapshot.
+- Packet recording verifies the exact job snapshot, evaluation run, fingerprint,
+  and run-scoped evidence snapshot before insertion.
+- `ready_for_review` requires the latest evaluation-run ID and rechecks every
+  current artifact file, including metadata, against its SHA-256 byte hash.
+- Artifact verification resolves from the configured workspace root, rejects
+  traversal, symlinked packet/file targets, and any directory other than the
+  packet-specific job path.
+- Document generation writes all five files to a packet-specific staging
+  directory, atomically renames the directory into place, and cleans up an
+  unattested promoted directory if recording fails. A later generation creates
+  a new directory and leaves earlier packet bytes unchanged.
+
+### Review GREEN and final verification
+
+Focused command:
+
+```powershell
+bun test tests/storage/migrations.test.ts tests/tracking/tracking.test.ts tests/tracking/cli.test.ts
+```
+
+Result: exited 0 with **9 pass, 0 fail, and 42 expectations**.
+
+Repository-wide verification:
+
+```powershell
+bun test
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+bun run typecheck
+```
+
+Result: exited 0 with **98 pass, 0 fail, and 326 expectations**, followed by a
+clean `tsc --noEmit` run. The real workspace database was inspected read-only
+and was not migrated or otherwise mutated.
