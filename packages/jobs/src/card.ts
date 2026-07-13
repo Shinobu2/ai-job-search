@@ -8,7 +8,7 @@ function list(items: string[], empty: string): string {
 
 export function renderResultCard(result: DisplayResult): string {
   const display = result;
-  const strongMatches = result.mappings
+  const evidenceMappings = result.mappings
     .filter((mapping) => ["proven", "partial", "transferable"].includes(mapping.status))
     .map((mapping) => `${mapping.requirementId} (${mapping.status}; evidence: ${mapping.evidenceIds.join(", ") || "none"})`);
   const gaps = result.mappings
@@ -29,8 +29,8 @@ export function renderResultCard(result: DisplayResult): string {
     `Tier: ${result.tier}`,
     `Confidence: ${result.confidence}`,
     `Verdict: ${result.verdict}`,
-    "Strong matches:",
-    list(strongMatches, "No verified or transferable matches."),
+    "Evidence mappings (verification status shown):",
+    list(evidenceMappings, "No proven, partial, or transferable mappings."),
     "Gaps:",
     list(gaps, "No material gaps recorded."),
     "VERIFY:",

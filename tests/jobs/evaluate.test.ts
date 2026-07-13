@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorkspaceSnapshot } from "../../packages/core/src/types";
 import { validateWorkspaceFile } from "../../packages/core/src/workspace";
+import { renderResultCard } from "../../packages/jobs/src/card";
 import { extractVacancy } from "../../packages/jobs/src/extract";
 import { buildEvaluationInput, evaluateVacancy } from "../../packages/jobs/src/evaluate";
 import type { ExtractedJob } from "../../packages/jobs/src/types";
@@ -215,6 +216,14 @@ test("keeps a placeholder shift as critical VERIFY rather than passing it", asyn
   expect(result.gates).toContainEqual(expect.objectContaining({ id: "shift", status: "VERIFY", critical: true }));
 });
 
+test("keeps absent critical posting facts as VERIFY", async () => {
+  const result = await evaluateText("# Hardware Technician\nSkills: PC hardware\n");
+
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "transport", status: "VERIFY", critical: true }));
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "physical", status: "VERIFY", critical: true }));
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "VERIFY", critical: true }));
+});
+
 test("keeps an unreliable deadline VERIFY rather than treating it as current", async () => {
   const result = await evaluateText("# Hardware Technician\nDeadline: TBD\n");
 
@@ -320,6 +329,30 @@ test("maps schema-valid unreviewed evidence as partial instead of inventing revi
   }, { ...workspace, evidence }, "2026-07-12");
 
   expect(result.mappings).toEqual([expect.objectContaining({ status: "partial", evidenceIds: ["PC_HARDWARE"] })]);
+});
+
+test("prefers verified exact support evidence over informal Discord evidence", async () => {
+  const extracted = extractVacancy("# Support Technician\nSkills: support\n");
+  const result = evaluateVacancy({ id: "verified_support", title: null, company: null, location: null }, {
+    ...extracted,
+    requirements: [{ id: "support", type: "skill", text: "support", spans: [], rule_ids: [] }],
+  }, {
+    ...workspace,
+    evidence: { records: [
+      { id: "DISCORD_ASSISTANCE", kind: "informal_assistance", statement: "Informal Discord support assistance", reviewer_status: "user_confirmed", provenance: [{ source_type: "user_statement", source_ref: "test" }] },
+      { id: "VERIFIED_SUPPORT", kind: "hardware", statement: "Support", reviewer_status: "document_verified", provenance: [{ source_type: "document", source_ref: "test" }] },
+    ] },
+  } as unknown as WorkspaceSnapshot, "2026-07-12");
+
+  expect(result.mappings[0]).toMatchObject({ status: "proven", evidenceIds: ["VERIFIED_SUPPORT"] });
+});
+
+test("labels result-card mappings without calling provisional evidence strong", async () => {
+  const result = await evaluateFixture("dct-trainee.md");
+  const card = renderResultCard(result);
+
+  expect(card).toContain("Evidence mappings (verification status shown):");
+  expect(card).not.toContain("Strong matches:");
 });
 
 test("is deterministic, makes blockers override fit, and keeps fit independent from verified survival facts", async () => {

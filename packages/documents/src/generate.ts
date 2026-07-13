@@ -1,12 +1,24 @@
 type Record_ = { id: string; kind: string; statement: string; reviewer_status: string };
 type Mapping = { status: string; evidenceIds: string[] };
 type Gate = { status: string; reason: string; critical?: boolean };
+type VerifiedField = {
+  value?: string | null;
+  verification_status?: string;
+  provenance?: Array<{ source_type?: string; source_ref?: string }>;
+};
+
+function verifiedFactValue(field: VerifiedField | undefined): string | null {
+  if (!field?.value) return null;
+  if (!["user_confirmed", "document_verified"].includes(field.verification_status ?? "")) return null;
+  if (!field.provenance?.some((item) => item.source_type && item.source_ref)) return null;
+  return field.value;
+}
 
 export type DocumentPacket = { ready_for_submission: boolean; missing: string[]; english: string; german: string };
 
 export function generateDocumentPacket(input: { title: string; company: string; evaluation: { mappings: Mapping[]; gates: Gate[]; verdict?: string; tier?: string }; workspace: { profile: Record<string, unknown>; evidence: { records: Record_[] } } }): DocumentPacket {
-  const identity = input.workspace.profile.identity as { name?: { value?: string }; email?: { value?: string }; phone?: { value?: string } } | undefined;
-  const missing = ["name", "email", "phone"].filter((key) => !identity?.[key as keyof typeof identity]?.value).map((key) => `profile.identity.${key}`);
+  const identity = input.workspace.profile.identity as { name?: VerifiedField; email?: VerifiedField; phone?: VerifiedField } | undefined;
+  const missing = ["name", "email", "phone"].filter((key) => !verifiedFactValue(identity?.[key as keyof typeof identity])).map((key) => `profile.identity.${key}`);
   const allowedIds = new Set(input.evaluation.mappings.filter((mapping) => ["proven", "partial", "transferable"].includes(mapping.status)).flatMap((mapping) => mapping.evidenceIds));
   const evidence = input.workspace.evidence.records.filter((record) => allowedIds.has(record.id)
     && ["user_confirmed", "document_verified"].includes(record.reviewer_status)

@@ -43,6 +43,18 @@ function placeholder(text: string | null): boolean {
   return /^(?:tbd|unknown)$/i.test(text?.trim() ?? "");
 }
 
+function explicitlyNoOwnCarRequired(text: string): boolean {
+  return /\bno own car required\b|\b(?:own )?car (?:is )?not required\b/i.test(text);
+}
+
+function explicitlyNoHeavyWorkRequired(text: string): boolean {
+  return /\bno (?:continuous )?heavy (?:work|labou?r|lifting)(?: is)? required\b|\b(?:continuous )?heavy (?:work|labou?r|lifting) (?:is )?not required\b/i.test(text);
+}
+
+function explicitlyNoGermanRequirement(text: string): boolean {
+  return /\bno german(?: language)?(?: is)? required\b|\bgerman(?: language)? (?:is )?not required\b|\bgerman (?:is )?(?:a )?(?:plus|preferred|optional)\b/i.test(text);
+}
+
 function reliableIsoDate(value: string | null): value is string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value ?? "")) return false;
   const [year, month, day] = (value ?? "").split("-").map(Number);
@@ -86,25 +98,34 @@ function gatesFor(archetype: EvaluationResult["archetype"], extracted: Extracted
         : includes(shift, /night|rotating/i) && !verified(profile.constraints?.night_shifts) ? gate("shift", "VERIFY", true, "Night or rotating shifts conflict status is unknown")
           : includes(shift, /night|rotating/i) ? gate("shift", "PASS_WITH_RISK", true, "Night or rotating shifts need confirmation")
           : gate("shift", "PASS", true, "No night or rotating shift requirement"),
-    transport: includes(car, /own car required/i) && verified(profile.transport?.has_car) && profile.transport?.has_car.value === false
-      ? gate("transport", "BLOCKED", true, "Own car is required but verified unavailable", ["profile.transport.has_car"])
-      : includes(car, /own car required/i) && verified(profile.transport?.has_car) && profile.transport?.has_car.value === true
-        ? gate("transport", "PASS", true, "Verified own car meets the requirement", ["profile.transport.has_car"])
-        : includes(car, /own car required/i) ? gate("transport", "VERIFY", true, "Own-car requirement needs verification")
-        : gate("transport", "PASS", false, "No own-car requirement"),
-    physical: includes(physical, /continuous heavy|heavy labour|heavy labor/i) && verified(profile.constraints?.continuous_heavy_work) && profile.constraints?.continuous_heavy_work.value === "blocked"
-      ? gate("physical", "BLOCKED", true, "Continuous heavy work conflicts with a verified constraint", ["profile.constraints.continuous_heavy_work"])
-      : includes(physical, /continuous heavy|heavy labour|heavy labor/i) ? gate("physical", "VERIFY", true, "Physical requirement needs confirmation")
-        : gate("physical", "PASS", false, "No continuous heavy-work requirement"),
+    transport: !car || placeholder(car) ? gate("transport", "VERIFY", true, "Transport requirements are unknown")
+      : includes(car, /own car required/i) && verified(profile.transport?.has_car) && profile.transport?.has_car.value === false
+        ? gate("transport", "BLOCKED", true, "Own car is required but verified unavailable", ["profile.transport.has_car"])
+        : includes(car, /own car required/i) && verified(profile.transport?.has_car) && profile.transport?.has_car.value === true
+          ? gate("transport", "PASS", true, "Verified own car meets the requirement", ["profile.transport.has_car"])
+          : includes(car, /own car required/i) ? gate("transport", "VERIFY", true, "Own-car requirement needs verification")
+            : explicitlyNoOwnCarRequired(car) ? gate("transport", "PASS", false, "Posting explicitly states that no own car is required")
+              : gate("transport", "VERIFY", true, "Transport requirement needs confirmation"),
+    physical: !physical || placeholder(physical) ? gate("physical", "VERIFY", true, "Physical requirements are unknown")
+      : includes(physical, /continuous heavy|heavy labour|heavy labor/i) && verified(profile.constraints?.continuous_heavy_work) && profile.constraints?.continuous_heavy_work.value === "blocked"
+        ? gate("physical", "BLOCKED", true, "Continuous heavy work conflicts with a verified constraint", ["profile.constraints.continuous_heavy_work"])
+        : includes(physical, /continuous heavy|heavy labour|heavy labor/i) ? gate("physical", "VERIFY", true, "Physical requirement needs confirmation")
+          : explicitlyNoHeavyWorkRequired(physical) ? gate("physical", "PASS", false, "Posting explicitly states that continuous heavy work is not required")
+            : gate("physical", "VERIFY", true, "Physical requirement needs confirmation"),
     scope: includes(skills, /warehouse|conveyor/i) ? gate("scope", "BLOCKED", true, "Warehouse or conveyor work is outside scope", ["posting.skills"])
       : gate("scope", "PASS", false, "No warehouse or conveyor requirement"),
     facilities: includes(`${skills} ${education}`, /electrical|hvac|high-voltage|critical switching/i) && archetype !== "BT"
       ? gate("facilities", "BLOCKED", true, "Electrical or HVAC work requires unproven hands-on qualification", ["posting.skills", "posting.education"])
       : gate("facilities", "PASS", false, "No unsupported electrical or HVAC requirement"),
     language: (() => {
+      if (!languages || placeholder(languages)) return gate("language", "VERIFY", true, "Language requirements are unknown");
       const germanRequirement = /german\s+(b2|c1)/i.exec(languages ?? "")?.[1]?.toUpperCase() as "B2" | "C1" | undefined;
       const englishAlternative = germanRequirement !== undefined && hasAcceptedEnglishAlternative(languages, germanRequirement);
-      if (!germanRequirement) return gate("language", "PASS", false, "No German B2/C1 requirement");
+      if (!germanRequirement) {
+        return explicitlyNoGermanRequirement(languages)
+          ? gate("language", "PASS", false, "Posting explicitly has no mandatory German requirement")
+          : gate("language", "VERIFY", true, "Language requirement needs confirmation");
+      }
       if (englishAlternative) {
         const german = profile.languages?.german;
         const english = profile.languages?.english;
@@ -154,6 +175,12 @@ function mappingFor(requirement: ExtractedJob["requirements"][number], evidence:
   const unknownClaim = /home[-\s]+lab|planned|theory/.test(text);
   const discord = evidence.find((record) => record.kind === "informal_assistance");
   const eligibleEvidence = evidence.filter((record) => record.kind !== "planned_project" && !/home[-\s]+lab|planned|theory/i.test(record.statement));
+  const verifiedExact = eligibleEvidence.find((record) => record.kind !== "informal_assistance"
+    && ["user_confirmed", "document_verified"].includes(record.reviewer_status)
+    && record.statement.toLowerCase().includes(text));
+  if (verifiedExact) {
+    return { id, requirementId: requirement.id, status: "proven", evidenceIds: [verifiedExact.id], credit: evaluationRules.mapping_credits.proven };
+  }
   if (/support|help.?desk|ticket/.test(text) && discord) return { id, requirementId: requirement.id, status: "contradicted", evidenceIds: [], credit: evaluationRules.mapping_credits.contradicted };
   if (unknownClaim) return { id, requirementId: requirement.id, status: "unknown", evidenceIds: [], credit: evaluationRules.mapping_credits.unknown };
   if (/education|ausbildung|degree/.test(text)) return { id, requirementId: requirement.id, status: "missing", evidenceIds: [], credit: evaluationRules.mapping_credits.missing };
