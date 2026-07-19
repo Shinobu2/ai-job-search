@@ -44,6 +44,11 @@ Thumbs.db
 
 # Local candidate workspace data
 workspace/
+!workspace/
+workspace/*
+!workspace/inbox/
+workspace/inbox/*
+!workspace/inbox/.gitkeep
 
 # Local agent execution ledger and review artifacts
 .superpowers/

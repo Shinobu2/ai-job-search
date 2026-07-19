@@ -48,7 +48,7 @@ test("search schema accepts a read-only Jobsuche source without breaking FreeHir
   })).not.toThrow();
 });
 
-test("search freehire imports, evaluates, and prints a local shortlist without submission", async () => {
+test("search freehire prints imported jobs for model review without submission", async () => {
   const directory = await mkdtemp(join(tmpdir(), "career-control-room-search-cli-"));
   await cp(join(root, "workspace.example"), join(directory, "workspace"), { recursive: true });
   const job = { public_slug: "fixture-dct", title: "Data Center Technician", company: "Fixture DC", location: "Frankfurt, Germany", url: "https://jobs.example/fixture-dct", description: "Skills: hardware replacement", skills: ["Hardware"], regions: ["eu"], countries: ["DE"], cities: ["Frankfurt"], posted_at: "2026-07-12", created_at: "2026-07-12", enrichment: {} };
@@ -76,12 +76,12 @@ test("search freehire imports, evaluates, and prints a local shortlist without s
     expect(await child.exited).toBe(0);
     expect(await new Response(child.stderr).text()).toBe("");
     const stdout = await new Response(child.stdout).text();
-    expect(stdout).toContain("FreeHire discovered: 3 | actionable shortlist: 0");
+    expect(stdout).toContain("FreeHire discovered: 3 | raw results for model review: 3");
     expect(stdout).toContain("Counters: searched=28 detailed=4 imported=3 skipped=1 failed=1");
     expect(stdout).toContain("[detail] http_503 fixture-failed");
-    expect(stdout).not.toContain("Data Center Technician — Fixture DC");
-    expect(stdout).not.toContain("Warehouse Operative");
-    expect(stdout).not.toContain("Munich Technician");
+    expect(stdout).toContain("Data Center Technician — Fixture DC");
+    expect(stdout).toContain("Warehouse Operative");
+    expect(stdout).toContain("Munich Technician");
     expect(stdout).toContain("No application was submitted.");
     const db = openDatabase(join(directory, "workspace", "control-room.sqlite"));
     try { expect(db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 3 }); }
@@ -92,7 +92,7 @@ test("search freehire imports, evaluates, and prints a local shortlist without s
   }
 });
 
-test("search jobsuche imports, evaluates, and prints a local shortlist without submission", async () => {
+test("search jobsuche prints imported jobs for model review without submission", async () => {
   const directory = await mkdtemp(join(tmpdir(), "career-control-room-jobsuche-cli-"));
   await cp(join(root, "workspace.example"), join(directory, "workspace"), { recursive: true });
   const job = { referenznummer: "10001-1002716922-S", beruf: "Data Center Technician", arbeitgeber: "Fixture DC", arbeitsort: { ort: "Frankfurt", land: "Deutschland" }, externeUrl: "https://jobs.example/fixture-dct" };
@@ -115,9 +115,9 @@ test("search jobsuche imports, evaluates, and prints a local shortlist without s
     expect(await child.exited).toBe(0);
     expect(await new Response(child.stderr).text()).toBe("");
     const stdout = await new Response(child.stdout).text();
-    expect(stdout).toContain("Jobsuche discovered: 1 | actionable shortlist: 0 | showing: 0");
+    expect(stdout).toContain("Jobsuche discovered: 1 | raw results for model review: 1");
     expect(stdout).toContain("Counters: searched=1 detailed=1 imported=1 skipped=0 failed=0");
-    expect(stdout).not.toContain("Data Center Technician — Fixture DC");
+    expect(stdout).toContain("Data Center Technician — Fixture DC");
     expect(stdout).toContain("No application was submitted.");
     const db = openDatabase(join(directory, "workspace", "control-room.sqlite"));
     try { expect(db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 1 }); }
@@ -128,7 +128,7 @@ test("search jobsuche imports, evaluates, and prints a local shortlist without s
   }
 });
 
-test("search employers stores Tier C, X, and blocked jobs without printing them", async () => {
+test("search employers prints imported jobs for model review", async () => {
   const directory = await mkdtemp(join(tmpdir(), "career-control-room-personio-filter-cli-"));
   await cp(join(root, "workspace.example"), join(directory, "workspace"), { recursive: true });
   const server = Bun.serve({
@@ -148,9 +148,9 @@ test("search employers stores Tier C, X, and blocked jobs without printing them"
     expect(await child.exited).toBe(0);
     expect(await new Response(child.stderr).text()).toBe("");
     const stdout = await new Response(child.stdout).text();
-    expect(stdout).toContain("Employer shortlist: 0");
-    expect(stdout).not.toContain("Data Center Technician — maincubes");
-    expect(stdout).not.toContain("Warehouse Operative — maincubes");
+    expect(stdout).toContain("Employer results for model review: 3");
+    expect(stdout).toContain("Data Center Technician — maincubes");
+    expect(stdout).toContain("Warehouse Operative — maincubes");
     const db = openDatabase(join(directory, "workspace", "control-room.sqlite"));
     try { expect(db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 3 }); }
     finally { db.close(); }
@@ -175,7 +175,7 @@ test("search employers reports a source outage and still prints the no-submit gu
     const stdout = await new Response(child.stdout).text();
     expect(stdout).toContain("Personio maincubes diagnostics: 1");
     expect(stdout).toContain("[search] http_503 maincubes");
-    expect(stdout).toContain("Employer shortlist: 0");
+    expect(stdout).toContain("Employer results for model review: 0");
     expect(stdout.trim().endsWith("No application was submitted.")).toBe(true);
   } finally {
     server.stop(true);

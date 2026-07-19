@@ -18,7 +18,7 @@ import { discoverFreehire, type FreehireSourceConfig } from "../packages/search/
 import { discoverJobsuche, type JobsucheSourceConfig } from "../packages/search/src/jobsuche";
 import { loadEmployerRegistry } from "../packages/search/src/employer-registry";
 import { discoverPersonioEmployer } from "../packages/search/src/personio";
-import { isActionableDiscoveryJob, type DiscoveryCounters, type SourceDiagnostic } from "../packages/search/src/types";
+import { type DiscoveryCounters, type SourceDiagnostic } from "../packages/search/src/types";
 import { generateDocumentPacket, hashEvidenceSnapshot } from "../packages/documents/src/generate";
 
 type JobFlags = { id?: string; file?: string; text?: string; status?: string; next?: string; note?: string; confirm?: string };
@@ -131,8 +131,9 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
           const batch = await discoverPersonioEmployer(employer, repository, workspace, { maxResults: 25 - processed });
           processed += batch.jobs.length;
           printDiscoveryDiagnostics(`Personio ${employer.id}`, batch.counters, batch.diagnostics);
-          for (const job of batch.jobs.filter(isActionableDiscoveryJob)) {
-            console.log(renderResultCard({ ...job.evaluation!, title: job.title, company: job.company }));
+          for (const job of batch.jobs) {
+            console.log(`${job.title} — ${job.company}`);
+            console.log(`Location: ${job.location ?? "unknown"}`);
             console.log(`Source: Personio ${job.sourceId} — ${job.sourceUrl}`);
             console.log(`Import: ${job.reused ? "reused" : "created"}\n`);
             count += 1;
@@ -143,7 +144,7 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
         }
         if (processed >= 25) break;
       }
-      console.log(`Employer shortlist: ${count}`);
+      console.log(`Employer results for model review: ${count}`);
       console.log("No application was submitted.");
       return;
     } finally {
@@ -162,13 +163,13 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
       ? await discoverJobsuche(source, repository, workspace)
       : await discoverFreehire(source, repository, workspace);
     const sourceLabel = jobsuche ? "Jobsuche" : "FreeHire";
-    const actionable = batch.jobs.filter(isActionableDiscoveryJob);
-    const displayed = actionable.slice(0, 10);
-    console.log(`${sourceLabel} discovered: ${batch.jobs.length} | actionable shortlist: ${actionable.length} | showing: ${displayed.length}`);
+    const displayed = batch.jobs.slice(0, 25);
+    console.log(`${sourceLabel} discovered: ${batch.jobs.length} | raw results for model review: ${displayed.length}`);
     printDiscoveryDiagnostics(sourceLabel, batch.counters, batch.diagnostics);
     for (const result of displayed) {
       console.log("");
-      console.log(renderResultCard({ ...result.evaluation!, title: result.title, company: result.company }));
+      console.log(`${result.title} — ${result.company}`);
+      console.log(`Location: ${result.location ?? "unknown"}`);
       console.log(`Source: ${sourceLabel} ${result.sourceId} — ${result.sourceUrl}`);
       console.log(`Import: ${result.reused ? "reused" : "created"}`);
     }
