@@ -1,14 +1,12 @@
-# Career Control Room Agent Guide
+# Personal German Job Hunt
 
-- Treat `workspace/profile.yml`, `workspace/evidence.yml`, and `workspace/document-pack.yml` as the only candidate-fact authority.
-- Unknown remains `unknown`; never infer legal status, credentials, experience, salary conversion, commute, or transport.
-- Every established fact requires provenance. User-provided facts use `user_confirmed` and `user_statement`.
-- Home-lab work is a planned project, never employment. Discord help is informal assistance, never professional support.
-- Use the JSON schemas in `config/schemas/` to validate workspace YAML.
-- Run `bun run setup` to create or safely merge the untracked local `workspace/` directory.
-- Run `bun run doctor` before relying on local tooling; it reports optional LaTeX/Poppler tools as warnings unless `--strict` is set.
-- Stage 1 is local and deterministic: no live connectors, browser automation, outreach, or submission.
-- Add focused tests first, observe RED, implement minimum GREEN, then run relevant regressions.
-- Keep changes narrow. Do not overwrite user-owned workspace scalars, maps, or lists.
-- Keep private files out of Git; `python tools/security_guards.py` verifies the repository guards.
-- See `docs/superpowers/plans/2026-07-10-stage-1-vertical-slice.md` for the Stage 1 delivery sequence.
+- This repository serves one person's German job search. Prefer a working workflow over reusable platform architecture.
+- Use model reasoning for CV understanding, vacancy matching, questions, recommendations, and document tailoring.
+- Use code only for search, deduplication, persistence, document compilation, tracking, and supervised browser interaction.
+- Reuse FreeHire, Bundesagentur Jobsuche, Personio employer search, existing persistence/tracker, and the upstream LaTeX templates.
+- Do not add migrations, schemas, capability records, scoring frameworks, storage abstractions, connectors, broad tests, or design documents.
+- Ask missing critical questions once in a short batch. Never invent experience, education, languages, availability, salary, address, or work rights.
+- Keep submission supervised. Fill applications only from confirmed evidence and stop before the final Submit/Send action or legally meaningful consent.
+- Keep personal files in `workspace/`; Git tracks only `workspace/inbox/.gitkeep`.
+- Use Serena symbol tools for code navigation. Avoid rereading large files when a symbol-level view is enough.
+- Run only the smoke test and relevant tests for touched code.

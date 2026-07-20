@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 GUARD_SCRIPT = REPO_ROOT / "tools" / "security_guards.py"
 
 sys.path.insert(0, str(REPO_ROOT / "tools"))
-import security_guards  # noqa: E402  (imported for its allowlist constants)
+import security_guards  # noqa: E402
 
 
 def run_guards(root: Path) -> subprocess.CompletedProcess:
@@ -36,10 +36,6 @@ class GuardRepoFixture(unittest.TestCase):
         (self.root / "tools").mkdir()
         shutil.copy(GUARD_SCRIPT, self.root / "tools" / "security_guards.py")
 
-        self.settings = self.root / ".claude" / "settings.json"
-        self.settings.parent.mkdir()
-        self.write_settings(sorted(security_guards.ALLOWED_PERMISSIONS))
-
         self.gitignore = self.root / ".gitignore"
         self.write_gitignore(security_guards.REQUIRED_IGNORE_RULES + [".vs/", "workspace/"])
 
@@ -49,9 +45,6 @@ class GuardRepoFixture(unittest.TestCase):
         self.manifest = self.root / ".agents" / "skills" / "example-search" / "cli" / "package.json"
         self.manifest.parent.mkdir(parents=True)
         self.write_manifest({"name": "example-cli", "scripts": {"start": "bun run src/cli.ts"}})
-
-    def write_settings(self, allow):
-        self.settings.write_text(json.dumps({"permissions": {"allow": list(allow)}}))
 
     def write_gitignore(self, rules):
         self.gitignore.write_text("\n".join(rules) + "\n")
@@ -65,35 +58,6 @@ class CleanTreeTests(GuardRepoFixture):
         result = run_guards(self.root)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("security_guards: OK", result.stdout)
-
-
-class PermissionGuardTests(GuardRepoFixture):
-    def test_wildcard_bash_permission_fails(self):
-        self.write_settings(sorted(security_guards.ALLOWED_PERMISSIONS) + ["Bash(*)"])
-        result = run_guards(self.root)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("not in the reviewed allowlist", result.stdout)
-        self.assertIn("Bash(*)", result.stdout)
-
-    def test_network_fetch_permission_fails(self):
-        self.write_settings(sorted(security_guards.ALLOWED_PERMISSIONS) + ["Bash(curl:*)"])
-        result = run_guards(self.root)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("not in the reviewed allowlist", result.stdout)
-
-    def test_dropped_allowlisted_permission_still_passes(self):
-        # Removing a shipped permission narrows exposure; the guard only
-        # rejects additions, it must not force entries to exist.
-        allow = sorted(security_guards.ALLOWED_PERMISSIONS)[:-1]
-        self.write_settings(allow)
-        result = run_guards(self.root)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-    def test_invalid_settings_json_fails(self):
-        self.settings.write_text("{not json")
-        result = run_guards(self.root)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("invalid JSON", result.stdout)
 
 
 class GitignoreGuardTests(GuardRepoFixture):
@@ -169,6 +133,17 @@ class ManifestGuardTests(GuardRepoFixture):
 
 
 class WorkspaceGuardTests(GuardRepoFixture):
+    def test_tracked_inbox_placeholder_passes(self):
+        placeholder = self.root / "workspace" / "inbox" / ".gitkeep"
+        placeholder.parent.mkdir(parents=True)
+        placeholder.touch()
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        subprocess.run(["git", "-C", str(self.root), "add", "-f", "workspace/inbox/.gitkeep"], check=True)
+
+        result = run_guards(self.root)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_tracked_workspace_file_fails(self):
         workspace_file = self.root / "workspace" / "profile.yml"
         workspace_file.parent.mkdir()

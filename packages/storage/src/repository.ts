@@ -568,10 +568,12 @@ export class StorageRepository {
     const requiredCurrent: Partial<Record<ApplicationStatus, ApplicationStatus | null>> = {
       shortlisted: null,
       ready_for_review: "shortlisted",
-      user_submitted: "ready_for_review",
       interview: "user_submitted",
       offer: "interview",
     };
+    if (status === "user_submitted" && !["shortlisted", "ready_for_review"].includes(current?.status ?? "")) {
+      throw new Error("user_submitted requires current status shortlisted or ready_for_review");
+    }
     if (status in requiredCurrent && (current?.status ?? null) !== requiredCurrent[status]) {
       throw new Error(`${status} requires current status ${requiredCurrent[status] ?? "none"}`);
     }

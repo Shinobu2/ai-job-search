@@ -1,20 +1,13 @@
-# CI for the framework itself: LaTeX smoke compiles, skill/command lint,
-# CLI typechecks, and (upstream only) placeholder integrity.
-#
-# Fork-friendly by design: forks personalize CLAUDE.md, the skill files, and
-# cv/main_example.tex via /setup, so the placeholder-integrity job and the
-# exact page-count assertions run only on the upstream template repo. Compile
-# success and lint correctness are asserted everywhere.
+# CI for the personal fork: agent-skill lint, privacy guards, focused tests,
+# LaTeX smoke compiles, and typechecks for the two retained search skills.
 #
 # Deliberately NOT here: live smoke tests of the job-portal CLIs. They hit
 # real portals (network-flaky, and the linkedin-search skill is personal-use
 # only per its own ToS warning - CI-automated requests would violate that).
 # CLIs get typechecked instead; live testing stays a local, on-demand step.
 #
-# Security posture: this template ships pre-approved Claude Code permissions
-# and CLI code that every fork user executes, so the security-guards job
-# fails PRs that widen settings.json permissions, weaken the personal-data
-# gitignore rules, or add package lifecycle scripts; dependency-review flags
+# Security guards fail changes that weaken personal-data gitignore rules or add
+# package lifecycle scripts; dependency-review flags
 # newly introduced vulnerable/malicious dependencies. Honest limit: a PR can
 # edit this workflow itself, so these guards catch accidents and casual
 # attempts, not a determined author - branch protection with required checks
@@ -34,7 +27,7 @@ permissions:
 
 jobs:
   lint:
-    name: Lint skills, commands, settings
+    name: Lint agent skills
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -45,7 +38,7 @@ jobs:
       - run: python tools/lint_skills.py
 
   security-guards:
-    name: Security guards (permissions, gitignore, manifests)
+    name: Security guards (privacy, manifests)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -137,10 +130,6 @@ jobs:
       matrix:
         tool:
           - freehire-search
-          - jobbank-search
-          - jobdanmark-search
-          - jobindex-search
-          - jobnet-search
           - linkedin-search
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -149,25 +138,3 @@ jobs:
         working-directory: .agents/skills/${{ matrix.tool }}/cli
       - run: bun run typecheck
         working-directory: .agents/skills/${{ matrix.tool }}/cli
-
-  placeholder-integrity:
-    name: Placeholder integrity (upstream template only)
-    if: github.repository == 'MadsLorentzen/ai-job-search'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Tracked template files must keep their placeholder tokens
-        run: |
-          fail=0
-          check() {
-            if ! grep -q "$2" "$1"; then
-              echo "::error file=$1::expected placeholder token $2 - personal data may have been committed"
-              fail=1
-            fi
-          }
-          check CLAUDE.md '\[YOUR_NAME\]'
-          check cv/main_example.tex '\[YOUR_NAME\]'
-          check cover_letters/cover_example.tex '\[YOUR NAME\]'
-          check .claude/skills/job-application-assistant/01-candidate-profile.md '<!-- SETUP'
-          check .claude/skills/job-application-assistant/04-job-evaluation.md '\[YOUR_PRIMARY_SKILLS\]'
-          exit $fail

@@ -76,7 +76,7 @@ test("enforces the repository application state machine and verifies current art
   const db = openDatabase(":memory:"); migrate(db); const repository = new StorageRepository(db, root);
   try {
     addJobAndEvaluation(repository);
-    expect(() => repository.setApplicationStatus("j", "user_submitted", { confirmed: true })).toThrow("ready_for_review");
+    expect(() => repository.setApplicationStatus("j", "user_submitted", { confirmed: true })).toThrow("shortlisted or ready_for_review");
     repository.setApplicationStatus("j", "shortlisted", { nextAction: "Review documents" });
     expect(() => repository.setApplicationStatus("j", "ready_for_review")).toThrow("attested current document packet");
     const files = writePacket(root, "j", "packet");
@@ -94,7 +94,11 @@ test("enforces the repository application state machine and verifies current art
       { status: "interview", actor: "user", note: null },
       { status: "offer", actor: "user", note: null },
     ]);
-    expect(db.query("SELECT COUNT(*) AS count FROM application_events").get()).toEqual({ count: 5 });
+    addJobAndEvaluation(repository, "-direct");
+    repository.setApplicationStatus("j-direct", "shortlisted");
+    expect(repository.setApplicationStatus("j-direct", "user_submitted", { confirmed: true, note: "Confirmed manual submission" }))
+      .toMatchObject({ status: "user_submitted", document_dir: null });
+    expect(db.query("SELECT COUNT(*) AS count FROM application_events").get()).toEqual({ count: 7 });
   } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
