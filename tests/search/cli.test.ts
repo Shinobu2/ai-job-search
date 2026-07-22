@@ -92,6 +92,51 @@ test("search freehire prints imported jobs for model review without submission",
   }
 });
 
+test("search freehire caps model-review output and diagnostic noise", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "career-control-room-search-cli-budget-"));
+  await cp(join(root, "workspace.example"), join(directory, "workspace"), { recursive: true });
+  const jobs = Array.from({ length: 13 }, (_, index) => ({
+    public_slug: `fixture-dct-${index + 1}`,
+    title: `Data Center Technician ${index + 1}`,
+    company: "Fixture DC",
+    location: "Frankfurt, Germany",
+    url: `https://jobs.example/fixture-dct-${index + 1}`,
+    description: "Skills: hardware replacement",
+    skills: ["Hardware"], regions: ["eu"], countries: ["DE"], cities: ["Frankfurt"],
+    posted_at: "2026-07-12", created_at: "2026-07-12", enrichment: {},
+  }));
+  const failed = Array.from({ length: 4 }, (_, index) => ({ ...jobs[0], public_slug: `fixture-failed-${index + 1}`, title: `Unavailable detail ${index + 1}`, url: `https://jobs.example/fixture-failed-${index + 1}` }));
+  const server = Bun.serve({
+    port: 0,
+    fetch(request) {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith("/search")) return payload([...jobs, ...failed]);
+      const job = jobs.find((candidate) => path.endsWith(`/${candidate.public_slug}`));
+      if (job) return payload(job);
+      if (path.includes("/fixture-failed-")) return new Response("unavailable", { status: 503 });
+      return new Response("not found", { status: 404 });
+    },
+  });
+  try {
+    const child = Bun.spawn([process.execPath, "--preload", freehireFetchFixture, cli, "search", "freehire"], {
+      cwd: directory,
+      env: { ...process.env, FREEHIRE_TEST_ENDPOINT: server.url.toString() },
+      stdout: "pipe", stderr: "pipe",
+    });
+    expect(await child.exited).toBe(0);
+    expect(await new Response(child.stderr).text()).toBe("");
+    const stdout = await new Response(child.stdout).text();
+    expect(stdout).toContain("FreeHire discovered: 13 | raw results for model review: 12");
+    expect(stdout.match(/Source: FreeHire/g)).toHaveLength(12);
+    expect(stdout).toContain("FreeHire diagnostics: 4 (showing 3)");
+    expect(stdout.match(/\[detail\] http_503/g)).toHaveLength(3);
+    expect(stdout).toContain("1 more diagnostic omitted.");
+  } finally {
+    server.stop(true);
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
+  }
+});
+
 test("search jobsuche prints imported jobs for model review without submission", async () => {
   const directory = await mkdtemp(join(tmpdir(), "career-control-room-jobsuche-cli-"));
   await cp(join(root, "workspace.example"), join(directory, "workspace"), { recursive: true });

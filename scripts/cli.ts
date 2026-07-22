@@ -128,7 +128,7 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
       for (const employer of registry.employers.filter((entry) => entry.enabled && entry.policy === "public_ats_endpoint" && entry.ats === "personio")) {
         try {
           const workspace = await loadWorkspace(root);
-          const batch = await discoverPersonioEmployer(employer, repository, workspace, { maxResults: 25 - processed });
+          const batch = await discoverPersonioEmployer(employer, repository, workspace, { maxResults: MODEL_REVIEW_LIMIT - processed });
           processed += batch.jobs.length;
           printDiscoveryDiagnostics(`Personio ${employer.id}`, batch.counters, batch.diagnostics);
           for (const job of batch.jobs) {
@@ -142,7 +142,7 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
           const diagnostic: SourceDiagnostic = { stage: "search", locator: employer.id, code: "employer_failed", message: error instanceof Error ? error.message : String(error), transient: false };
           printDiscoveryDiagnostics(`Personio ${employer.id}`, { searched: 0, detailed: 0, imported: 0, skipped: 0, failed: 1 }, [diagnostic]);
         }
-        if (processed >= 25) break;
+        if (processed >= MODEL_REVIEW_LIMIT) break;
       }
       console.log(`Employer results for model review: ${count}`);
       console.log("No application was submitted.");
@@ -163,7 +163,7 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
       ? await discoverJobsuche(source, repository, workspace)
       : await discoverFreehire(source, repository, workspace);
     const sourceLabel = jobsuche ? "Jobsuche" : "FreeHire";
-    const displayed = batch.jobs.slice(0, 25);
+    const displayed = batch.jobs.slice(0, MODEL_REVIEW_LIMIT);
     console.log(`${sourceLabel} discovered: ${batch.jobs.length} | raw results for model review: ${displayed.length}`);
     printDiscoveryDiagnostics(sourceLabel, batch.counters, batch.diagnostics);
     for (const result of displayed) {
@@ -179,13 +179,20 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
   }
 }
 
+const MODEL_REVIEW_LIMIT = 12;
+const DIAGNOSTIC_PREVIEW_LIMIT = 3;
+
 function printDiscoveryDiagnostics(label: string, counters: DiscoveryCounters, diagnostics: SourceDiagnostic[]): void {
   console.log(`Counters: searched=${counters.searched} detailed=${counters.detailed} imported=${counters.imported} skipped=${counters.skipped} failed=${counters.failed}`);
   if (diagnostics.length === 0) return;
-  console.log(`${label} diagnostics: ${diagnostics.length}`);
-  for (const diagnostic of diagnostics) {
+  const preview = diagnostics.slice(0, DIAGNOSTIC_PREVIEW_LIMIT);
+  const previewLabel = diagnostics.length > preview.length ? ` (showing ${preview.length})` : "";
+  console.log(`${label} diagnostics: ${diagnostics.length}${previewLabel}`);
+  for (const diagnostic of preview) {
     console.log(`- [${diagnostic.stage}] ${diagnostic.code} ${diagnostic.locator} — ${diagnostic.message}`);
   }
+  const omitted = diagnostics.length - preview.length;
+  if (omitted > 0) console.log(`${omitted} more diagnostic${omitted === 1 ? "" : "s"} omitted.`);
 }
 
 async function runDocuments(root: string, command: string | undefined, arguments_: string[]): Promise<void> {
