@@ -50,12 +50,15 @@ List up to two reserves in one line. End with coverage and phone commands: `по
 4. Compile and inspect: CV with `lualatex` (maximum two pages), letter with `xelatex` (one page). Verify extracted text order, contacts, dates and every substantive claim.
 5. Use one browser tab per application and the signed-in exact role page. Prefer Chrome/Computer Use when an existing login or file upload is required. Upload once, batch-fill known fields and review once; if the active surface cannot upload, leave one exact manual attachment tap. Never generate, store or fill a password.
 6. Make at most two evidence-based attempts on a custom dropdown/upload. Then keep the live tab at that field and state the exact manual tap.
-7. Stop before Submit/Send, terms/privacy acceptance, CAPTCHA, OTP, login, e-signature or an unknown mandatory answer. State only the remaining taps.
+7. Submit/send when the user gives clear task-specific approval for the named or numbered application/email batch; that approval covers the final actions in the batch and does not need to be requested again. Stop for an unknown mandatory answer, CAPTCHA, OTP, login, e-signature or separate legally meaningful consent, and state only the blocker.
 8. Prefer straightforward ATS forms such as Greenhouse, Lever, Ashby, Workable, Personio and Teamtailor. Keep LinkedIn supervised and low-volume.
 9. Update the tracker idempotently. Respect its attested-document guard for `ready_for_review`; never bypass it for portal-only applications. Set `user_submitted` only after user confirmation.
 
 ## Recover cheaply across desktop and phone
 
+- On every continuation, read `applications list` once and resume only records whose `next_action` is still pending. Do not rediscover or reopen completed applications.
+- For email applications, verify delivery with a recent `Sent` search using the exact recipient and subject. A remaining draft is not proof that delivery failed; when a matching sent message exists, do not resend, mark the tracker `user_submitted`, and leave draft deletion for explicit user approval.
+- Keep working context to the candidate brief, the tracker delta and full text for at most twelve genuinely new postings. Summarize tool output immediately; persist only the canonical URL, decision, blocker and next manual tap.
 - Re-understand the CV only when it changes. Compare vacancies and generate documents in batches.
 - Persist one checkpoint per application in the existing tracker `next_action`: canonical URL, completed fields, uploaded file, blocker and one remaining manual action. Resume there; do not reopen adverts or refill confirmed fields.
 - Prefer Android Remote for the full workflow; the paired PC must stay powered, online, awake and unlocked for browser work.
