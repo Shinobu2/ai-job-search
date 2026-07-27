@@ -10,6 +10,8 @@ Use this as a query and coverage checklist, not as a scoring system.
 
 Search German spelling variants, abbreviations, nearby cities, region names, airports/industrial parks, and realistic commute radii. Run a focused local wave first, then expand geography only with the user's preference.
 
+Use `hunter` for the three-wave sweep above. Use `sniper` when the user names an employer, source, or exact role; inspect only those exact live adverts. Both modes keep the twelve-posting cap and the same tracker.
+
 ## Coverage ladder
 
 1. Run the repository's FreeHire, Bundesagentur Jobsuche, and registered Personio-employer searches.
@@ -22,7 +24,7 @@ Do not add a new connector merely to cover another site. Web search and direct-p
 
 ## Review rules
 
-- Collapse duplicates by employer, normalized title, location, and canonical URL; keep the richest/current source.
+- Collapse duplicates by canonical URL, provider job ID, normalized employer/title/location, and content fingerprint; keep the richest/current source.
 - Prefer adverts posted or updated recently. Open the page and mark missing/closed adverts as stale.
 - Separate `hard blocker`, `likely fit`, and `needs confirmation` in reasoning, but do not calculate a score.
 - Read duties and must-have wording. “Preferred”, “nice to have”, and a long technology list are not automatic blockers.

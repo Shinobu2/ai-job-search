@@ -1,8 +1,10 @@
 {
   "version": "employer-registry-v1",
-  "cities": ["Frankfurt am Main", "Eschborn", "Offenbach", "Neu-Isenburg", "Langen", "Kelsterbach", "Darmstadt"],
+  "cities": ["Frankfurt am Main", "Eschborn", "Offenbach", "Neu-Isenburg", "Langen", "Kelsterbach", "Darmstadt", "Wiesbaden", "Mainz", "Rüsselsheim am Main", "Raunheim", "Hanau", "Bad Homburg"],
   "employers": [
-    {"id":"maincubes","name":"maincubes","cities":["Frankfurt am Main"],"career_url":"https://maincubes-1.jobs.personio.de/?language=de","ats":"personio","policy":"public_ats_endpoint","enabled":true},
+    {"id":"maincubes","name":"maincubes","cities":["Frankfurt am Main"],"career_url":"https://maincubes-1.jobs.personio.com/?language=en","ats":"personio","policy":"public_ats_endpoint","enabled":true},
+    {"id":"hellofresh","name":"HelloFresh","cities":["Frankfurt am Main"],"career_url":"https://job-boards.greenhouse.io/hellofresh","ats":"greenhouse","policy":"public_ats_endpoint","enabled":true},
+    {"id":"crytek","name":"Crytek","cities":["Frankfurt am Main"],"career_url":"https://jobs.lever.co/crytek","ats":"lever","policy":"public_ats_endpoint","enabled":true},
     {"id":"equinix","name":"Equinix","cities":["Frankfurt am Main"],"career_url":"https://careers.equinix.com/operations-deutschland","ats":"unknown","policy":"manual_only","enabled":true},
     {"id":"ntt-gdc","name":"NTT Global Data Centers","cities":["Frankfurt am Main"],"career_url":"https://careers.e-shelter.com/?locale=de_DE","ats":"workday","policy":"manual_only","enabled":true},
     {"id":"digital-realty","name":"Digital Realty","cities":["Frankfurt am Main"],"career_url":"https://hdep.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/requisitions","ats":"oracle","policy":"manual_only","enabled":true},

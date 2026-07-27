@@ -160,13 +160,14 @@ test("creates an immutable new snapshot when source ID content changes", async (
   }
 });
 
-test("does not merge separate content solely by normalized company, title, and location", async () => {
+test("deduplicates logical vacancies by normalized company, title, and location", async () => {
   const fixture = await repository();
   try {
     const first = await importVacancy({ text: vacancy }, fixture.repository);
     const second = await importVacancy({ text: `${vacancy}\nSkills: Windows` }, fixture.repository);
     expect(second.reused).toBe(false);
     expect(second.id).not.toBe(first.id);
+    expect(second.logicalVacancyId).toBe(first.logicalVacancyId);
   } finally {
     fixture.db.close();
     await rm(fixture.directory, { recursive: true, force: true });
@@ -223,15 +224,15 @@ test("canonical URL takes precedence over stable source ID for logical vacancy i
   }
 });
 
-test("keeps separate stable source IDs separate even when vacancy identity fields and content match", async () => {
+test("deduplicates different provider IDs when identity and content match", async () => {
   const fixture = await repository();
   try {
     const first = await importVacancy({ text: vacancy, sourceId: "connector:vacancy-one" }, fixture.repository);
     const second = await importVacancy({ text: vacancy, sourceId: "connector:vacancy-two" }, fixture.repository);
 
     expect(second.id).not.toBe(first.id);
-    expect(second.logicalVacancyId).not.toBe(first.logicalVacancyId);
-    expect(fixture.db.query("SELECT COUNT(*) AS count FROM logical_vacancies").get()).toEqual({ count: 2 });
+    expect(second.logicalVacancyId).toBe(first.logicalVacancyId);
+    expect(fixture.db.query("SELECT COUNT(*) AS count FROM logical_vacancies").get()).toEqual({ count: 1 });
     expect(fixture.db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 2 });
   } finally {
     fixture.db.close();
@@ -239,19 +240,17 @@ test("keeps separate stable source IDs separate even when vacancy identity field
   }
 });
 
-test("unsupported or invalid canonical URLs fall back without colliding with source IDs", async () => {
+test("unsupported URLs fall back safely while normalized vacancy identity still deduplicates", async () => {
   const fixture = await repository();
   try {
     const unsupported = await importVacancy({ text: vacancy, sourceUrl: "source-id:connector:collision" }, fixture.repository);
     const sourceIdentified = await importVacancy({ text: `${vacancy}\nSkills: Networking`, sourceId: "connector:collision" }, fixture.repository);
     const invalid = await importVacancy({ text: `${vacancy}\nSkills: Windows`, sourceId: "connector:invalid", sourceUrl: "not a URL" }, fixture.repository);
 
-    expect(sourceIdentified.logicalVacancyId).not.toBe(unsupported.logicalVacancyId);
-    expect(invalid).toMatchObject({ version: 1 });
+    expect(sourceIdentified.logicalVacancyId).toBe(unsupported.logicalVacancyId);
+    expect(invalid).toMatchObject({ logicalVacancyId: unsupported.logicalVacancyId, version: 3 });
     expect(fixture.db.query("SELECT stable_key, canonical_url FROM logical_vacancies ORDER BY stable_key").all()).toEqual([
       { stable_key: expect.stringMatching(/^[a-f0-9]{64}$/), canonical_url: null },
-      { stable_key: "source-id:connector:collision", canonical_url: null },
-      { stable_key: "source-id:connector:invalid", canonical_url: null },
     ]);
   } finally {
     fixture.db.close();
@@ -323,17 +322,18 @@ test("concurrent discovery imports decide reuse inside SQLite and observe both r
 });
 
 test("discovery import rolls back a new source and job when run membership observation fails", async () => {
-  const fixture = await repository();
+  const db = openDatabase(":memory:");
+  migrate(db);
+  const storage = new StorageRepository(db);
   try {
     await expect(importVacancy(
-      { text: vacancy, sourceId: "connector:rollback" }, fixture.repository,
+      { text: vacancy, sourceId: "connector:rollback" }, storage,
       { discoveryRunId: "missing_run", observedAt: "2026-07-13T12:00:00.000Z" },
     )).rejects.toThrow("Unknown discovery run");
-    expect(fixture.db.query("SELECT COUNT(*) AS count FROM job_sources").get()).toEqual({ count: 0 });
-    expect(fixture.db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 0 });
-    expect(fixture.db.query("SELECT COUNT(*) AS count FROM logical_vacancies").get()).toEqual({ count: 0 });
+    expect(db.query("SELECT COUNT(*) AS count FROM job_sources").get()).toEqual({ count: 0 });
+    expect(db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 0 });
+    expect(db.query("SELECT COUNT(*) AS count FROM logical_vacancies").get()).toEqual({ count: 0 });
   } finally {
-    fixture.db.close();
-    await rm(fixture.directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
+    db.close();
   }
 });

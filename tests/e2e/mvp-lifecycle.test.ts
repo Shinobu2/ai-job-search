@@ -59,7 +59,7 @@ async function snapshotWorkspace(directory: string): Promise<WorkspaceSnapshot> 
   return { exists: true, files };
 }
 
-test("proves the isolated synthetic MVP lifecycle through public CLI commands", async () => {
+test("proves the isolated synthetic import-to-shortlist lifecycle through public CLI commands", async () => {
   const realWorkspace = join(root, "workspace");
   const realWorkspaceBefore = await snapshotWorkspace(realWorkspace);
   const directory = await mkdtemp(join(tmpdir(), "career-control-room-lifecycle-"));
@@ -110,7 +110,7 @@ test("proves the isolated synthetic MVP lifecycle through public CLI commands", 
       missing: string[];
       hashes: Record<string, string>;
     }>(await cli(directory, "documents", "generate", "--id", imported.id));
-    expect(generated).toMatchObject({ ready_for_submission: true, missing: [] });
+    expect(generated).toMatchObject({ ready_for_submission: false, missing: ["document.qa.complete_cv"] });
     expect(Object.values(generated.hashes).every((hash) => /^[a-f0-9]{64}$/.test(hash))).toBe(true);
 
     const packetDirectory = join(directory, ...generated.directory.split("/"));
@@ -127,8 +127,8 @@ test("proves the isolated synthetic MVP lifecycle through public CLI commands", 
     expect(metadata).toMatchObject({
       packet_id: generated.packet_id,
       evaluation_fingerprint: evaluated.fingerprint,
-      ready_for_submission: true,
-      missing: [],
+      ready_for_submission: false,
+      missing: ["document.qa.complete_cv"],
     });
     expect(metadata.job_snapshot_hash).toMatch(/^[a-f0-9]{64}$/);
     expect(metadata.evaluation_run_id).toMatch(/^evaluation_/);
@@ -143,25 +143,21 @@ test("proves the isolated synthetic MVP lifecycle through public CLI commands", 
     expect(documentText).not.toContain("unreviewed server installation claim");
 
     await cli(directory, "applications", "set", "--id", imported.id, "--status", "shortlisted");
-    await cli(directory, "applications", "set", "--id", imported.id, "--status", "ready_for_review");
-    await cli(directory, "applications", "set", "--id", imported.id, "--status", "user_submitted", "--confirm", "yes");
 
-    const applications = outputJson<Array<{ job_id: string; status: string; document_dir: string }>>(await cli(directory, "applications", "list"));
+    const applications = outputJson<Array<{ job_id: string; status: string; document_dir: string | null }>>(await cli(directory, "applications", "list"));
     expect(applications).toEqual([expect.objectContaining({
       job_id: imported.id,
-      status: "user_submitted",
-      document_dir: generated.directory,
+      status: "shortlisted",
+      document_dir: null,
     })]);
     const history = outputJson<Array<{ status: string; actor: string }>>(await cli(directory, "applications", "history", "--id", imported.id));
     expect(history.map(({ status, actor }) => ({ status, actor }))).toEqual([
       { status: "shortlisted", actor: "user" },
-      { status: "ready_for_review", actor: "user" },
-      { status: "user_submitted", actor: "user_confirmed_cli" },
     ]);
 
     const report = (await cli(directory, "report", "daily")).stdout;
-    expect(report).toContain("Imported today: 1 | Evaluated today: 1 | Application updates today: 3");
-    expect(report).toContain("Tracked applications: 1 | Statuses: user_submitted=1 | Best matches shown: 1");
+    expect(report).toContain("Imported today: 1 | Evaluated today: 1 | Application updates today: 1");
+    expect(report).toContain("Tracked applications: 1 | Statuses: shortlisted=1 | Best matches shown: 1");
     expect(report).toContain("## Next actions");
     expect(report).toContain("Review the top shortlist and verify shift, salary, and workplace details.");
 

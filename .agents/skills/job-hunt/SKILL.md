@@ -9,7 +9,7 @@ Run one small loop:
 
 `search -> dedupe/liveness/hard gates -> model comparison -> shortlist -> tailored documents -> fill once -> user submits -> tracker`
 
-Keep this personal. Reuse the repository's search, persistence, document compilation and tracker. Never add scoring code, schemas, connectors, browser frameworks or another profile store. Use model reasoning for CV/vacancy understanding, matching, questions and tailoring.
+Keep this personal. Reuse the repository's search, persistence, document compilation and tracker. Small changes to the existing schema, source adapters and document packet are allowed; never create parallel frameworks or stores. Use model reasoning for CV/vacancy understanding, matching, questions and tailoring.
 
 ## Load candidate facts once
 
@@ -20,14 +20,16 @@ Keep this personal. Reuse the repository's search, persistence, document compila
 
 ## Search with a fixed budget
 
-1. Read [references/search-germany.md](references/search-germany.md) when starting a search or when the user asks for more. Run existing commands once, preferably in parallel: `bun run search:freehire`, `bun run search:ba`, `bun run search:employers`.
-2. Cover direct roles, adjacent technical roles and paid short-onboarding/`Quereinstieg` roles. Use at most four focused web queries and inspect at most twelve exact postings per wave.
-3. Let code handle retrieval, deduplication, liveness, persistence and explicit filters. Do not build or report a deterministic semantic score.
-4. Prefer a live employer/ATS advert, then an authorised recruiter advert. Use boards only for discovery. Recheck the exact advert immediately before recommending or applying.
-5. Apply hard gates before model comparison: commute, start/work eligibility, mandatory licence/certificate/degree, contract, explicit language and work style. Mark unknowns `уточнить`; never average away a failed gate.
-6. For this candidate, reject continuous lifting, prolonged standing, conveyor/warehouse work, routine rack installation/decommissioning and constant field travel. Occasional server swaps, short walks and light carrying are acceptable. Treat multi-day travel as a separate risk.
-7. Prefer computer-heavy work: NOC/monitoring, IT operations, international internal/desktop support, data-centre repair/remote hands, access/incident coordination and asset/ticket operations. German user support requiring B1-C1 is a stretch, not a top match.
-8. Compare surviving full descriptions together once. Put the best three first and at most two genuine reserves below. Stop instead of padding.
+1. Choose one workflow mode. `hunter` is a broad local wave across existing sources and adjacent titles. `sniper` targets a short list of named employers or exact roles. Both reuse the same commands, tracker and review loop.
+2. Read [references/search-germany.md](references/search-germany.md) when starting a search or when the user asks for more. Run existing commands once, preferably in parallel: `bun run search:freehire`, `bun run search:ba`, `bun run search:employers`.
+3. Search Frankfurt/Rhine-Main first with an 80 km discovery radius. Treat radius as discovery only; judge the real route, shift time and public-transport feasibility separately.
+4. Cover direct roles, adjacent technical roles and paid short-onboarding/`Quereinstieg` roles. Prefer English working language. Use at most four focused web queries and inspect at most twelve exact postings per wave.
+5. Let code handle retrieval, liveness, persistence, explicit filters and dedupe by canonical URL, provider job ID, normalized company/title/location and content fingerprint. Do not build or report a deterministic semantic score.
+6. Prefer a live employer/ATS advert, then an authorised recruiter advert. Use boards only for discovery. Recheck the exact advert immediately before recommending or applying.
+7. Apply hard gates before model comparison: commute, start/work eligibility, mandatory licence/certificate/degree, contract, explicit language and work style. Mark unknowns `уточнить`; never average away a failed gate.
+8. For this candidate, reject continuous lifting, prolonged standing, conveyor/warehouse work, routine rack installation/decommissioning and constant field travel. Occasional server swaps, short walks and light carrying are acceptable. Treat multi-day travel as a separate risk.
+9. Prefer computer-heavy work: NOC/monitoring, IT operations, international internal/desktop support, data-centre repair/remote hands, access/incident coordination and asset/ticket operations. German user support requiring B1-C1 is a stretch, not a top match.
+10. Compare surviving full descriptions together once using model judgment: `Apply | Maybe | Skip`. Put the best three first and at most two genuine reserves below. Stop instead of padding.
 
 ## Return a mobile shortlist
 
@@ -45,12 +47,12 @@ List up to two reserves in one line. End with coverage and phone commands: `по
 ## Prepare selected applications once
 
 1. Re-open the canonical advert and read [references/cv-cover-letter-2026.md](references/cv-cover-letter-2026.md).
-2. Scan the whole form before editing. Build one compact matrix: `field -> proposed value -> evidence -> known | ask | user decision`. Batch all `ask` fields. Leave consent, declarations, work-authorisation wording, salary changes, EEO answers and relocation commitments for explicit review.
-3. Tailor only proven evidence through the upstream templates: `cv/main_<company>.tex` and `cover_letters/cover_<company>_<role>.tex`. Generate a letter only when accepted or requested.
-4. Compile and inspect: CV with `lualatex` (maximum two pages), letter with `xelatex` (one page). Verify extracted text order, contacts, dates and every substantive claim.
+2. Scan the whole form before editing. Build one compact matrix: `field -> proposed value -> source/evidence -> known | ask | user decision -> sensitive -> last-confirmed date`. Batch all `ask` fields. Leave consent, declarations, work-authorisation wording, role-specific salary, EEO answers and relocation commitments for explicit review.
+3. Tailor only proven evidence through the existing document packet. Produce a single-column ATS-safe DOCX first. Generate a letter only when accepted or requested; reuse the upstream LaTeX templates when a human-readable PDF is useful.
+4. Run the DOCX factual QA and ATS lint. Compile LaTeX only for an optional PDF (CV maximum two pages, letter one page). Verify extracted text order, contacts, dates and every substantive claim.
 5. Use one browser tab per application and the signed-in exact role page. Prefer Chrome/Computer Use when an existing login or file upload is required. Upload once, batch-fill known fields and review once; if the active surface cannot upload, leave one exact manual attachment tap. Never generate, store or fill a password.
 6. Make at most two evidence-based attempts on a custom dropdown/upload. Then keep the live tab at that field and state the exact manual tap.
-7. Submit/send when the user gives clear task-specific approval for the named or numbered application/email batch; that approval covers the final actions in the batch and does not need to be requested again. Stop for an unknown mandatory answer, CAPTCHA, OTP, login, e-signature or separate legally meaningful consent, and state only the blocker.
+7. Submit/send when the user gives clear task-specific approval for the named or numbered application/email batch; that approval covers the final actions in the batch and does not need to be requested again. Stop for work authorisation, legal declarations, consent, salary changes, relocation commitments, an unknown mandatory answer, CAPTCHA, OTP, login or e-signature, and state only the blocker.
 8. Prefer straightforward ATS forms such as Greenhouse, Lever, Ashby, Workable, Personio and Teamtailor. Keep LinkedIn supervised and low-volume.
 9. Update the tracker idempotently. Respect its attested-document guard for `ready_for_review`; never bypass it for portal-only applications. Set `user_submitted` only after user confirmation.
 

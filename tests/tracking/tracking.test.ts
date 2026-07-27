@@ -12,6 +12,8 @@ const artifactFiles = {
   german_cv: "cv-de.md",
   english_cover_letter: "cover-letter-en.md",
   german_cover_letter: "cover-letter-de.md",
+  ats_docx: "cv-ats.docx",
+  document_qa: "document-qa.json",
   metadata: "metadata.json",
 } as const;
 
@@ -166,5 +168,18 @@ test("requires an existing application and confirmation for rejected or withdraw
   repository.setApplicationStatus("j-withdrawn", "shortlisted");
   repository.setApplicationStatus("j-withdrawn", "withdrawn", { confirmed: true });
   expect(repository.listApplications().map((record) => record.status).sort()).toEqual(["rejected", "withdrawn"]);
+  db.close();
+});
+
+test("answer checkpoints update only pre-submit application states", () => {
+  const db = openDatabase(":memory:"); migrate(db); const repository = new StorageRepository(db);
+  addJobAndEvaluation(repository, "-checkpoint");
+  repository.setApplicationStatus("j-checkpoint", "shortlisted");
+  expect(repository.updateApplicationCheckpoint("j-checkpoint", "Review answers")).toMatchObject({
+    status: "shortlisted",
+    next_action: "Review answers",
+  });
+  repository.setApplicationStatus("j-checkpoint", "rejected", { confirmed: true });
+  expect(() => repository.updateApplicationCheckpoint("j-checkpoint", "Overwrite rejected state")).toThrow("shortlisted or ready_for_review");
   db.close();
 });

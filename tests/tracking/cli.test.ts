@@ -22,7 +22,7 @@ test("application CLI delegates transitions and rejects forged document metadata
     const imported = await run(directory, ["job", "import", "--text", "# Technician\nCompany: Example\nLocation: Frankfurt"]);
     expect(imported.code).toBe(0);
     const id = (JSON.parse(imported.stdout) as { id: string }).id;
-    expect((await run(directory, ["applications", "set", "--id", id, "--status", "user_submitted", "--confirm", "yes"])).stderr).toContain("requires current status ready_for_review");
+    expect((await run(directory, ["applications", "set", "--id", id, "--status", "user_submitted", "--confirm", "yes"])).stderr).toContain("requires current status shortlisted or ready_for_review");
     expect((await run(directory, ["applications", "set", "--id", id, "--status", "shortlisted"])).code).toBe(0);
     const history = await run(directory, ["applications", "history", "--id", id]);
     expect(history.code).toBe(0);
@@ -55,7 +55,7 @@ test("documents CLI hashes written artifacts and records the packet attestation"
     expect(metadata.packet_id).toBe(result.packet_id);
     expect(metadata.job_snapshot_hash).toMatch(/^[a-f0-9]{64}$/);
     expect(metadata.evaluation_run_id).toMatch(/^evaluation_/);
-    expect(Object.keys(metadata.artifact_hashes).sort()).toEqual(["english_cover_letter", "english_cv", "german_cover_letter", "german_cv"]);
+    expect(Object.keys(metadata.artifact_hashes).sort()).toEqual(["ats_docx", "document_qa", "english_cover_letter", "english_cv", "german_cover_letter", "german_cv"]);
     expect(Object.values(result.hashes).every((hash) => /^[a-f0-9]{64}$/.test(hash))).toBe(true);
     const db = openDatabase(join(directory, "workspace", "control-room.sqlite"));
     try {

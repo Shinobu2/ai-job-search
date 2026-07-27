@@ -1,6 +1,22 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "profile.schema.json",
+  "$defs": {
+    "verifiedDate": {
+      "allOf": [
+        { "$ref": "common.schema.json#/$defs/verifiedValue" },
+        {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": ["string", "null"],
+              "pattern": "^(?:\\d{4}-(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12]\\d|3[01])|\\d{4}-(?:04|06|09|11)-(?:0[1-9]|[12]\\d|30)|\\d{4}-02-(?:0[1-9]|1\\d|2[0-8])|(?:\\d{2}(?:0[48]|[2468][048]|[13579][26])|(?:[13579][26]|[2468][048]|0[48])00)-02-29)$"
+            }
+          }
+        }
+      ]
+    }
+  },
   "type": "object",
   "required": ["schema_version", "targets", "locations", "availability", "transport", "languages", "education", "legal", "constraints", "compensation"],
   "properties": {
@@ -38,7 +54,11 @@
     "availability": {
       "type": "object",
       "required": ["target_start"],
-      "properties": { "target_start": { "$ref": "common.schema.json#/$defs/verifiedValue" } },
+      "properties": {
+        "target_start": { "$ref": "common.schema.json#/$defs/verifiedValue" },
+        "relocation_date": { "$ref": "#/$defs/verifiedDate" },
+        "available_from": { "$ref": "#/$defs/verifiedDate" }
+      },
       "additionalProperties": false
     },
     "transport": {

@@ -68,6 +68,8 @@ export interface ObservationInput {
   rawHash: string;
   canonicalUrl?: string;
   stableSourceId?: string;
+  /** Existing snapshot matched by a secondary dedupe key. */
+  matchedJobId?: string;
   discoveryRunId?: string;
   observedAt?: string;
 }
@@ -137,6 +139,8 @@ const packetArtifactFiles = {
   german_cv: "cv-de.md",
   english_cover_letter: "cover-letter-en.md",
   german_cover_letter: "cover-letter-de.md",
+  ats_docx: "cv-ats.docx",
+  document_qa: "document-qa.json",
   metadata: "metadata.json",
 } as const;
 
@@ -268,6 +272,7 @@ export class StorageRepository {
     requireIsoTimestamp(observedAt, "observation.observedAt");
     const canonicalUrl = input.canonicalUrl ? normalizeCanonicalUrl(input.canonicalUrl) : null;
     if (input.stableSourceId !== undefined) requireValue(input.stableSourceId, "observation.stableSourceId");
+    if (input.matchedJobId !== undefined) requireValue(input.matchedJobId, "observation.matchedJobId");
     const stableKey = canonicalUrl ?? (input.stableSourceId ? `source-id:${input.stableSourceId}` : input.rawHash);
     const logicalVacancyId = `vacancy_${createHash("sha256").update(stableKey).digest("hex")}`;
 
@@ -276,11 +281,14 @@ export class StorageRepository {
     if (job.raw_snapshot_hash !== input.rawHash) throw new Error("observation rawHash must match the immutable job snapshot");
 
     const logical = this.db.query("SELECT id FROM logical_vacancies WHERE stable_key = ?").get(stableKey) as { id: string } | null;
-    if (!logical) {
+    const matched = !logical && input.matchedJobId
+      ? this.db.query("SELECT logical_vacancy_id AS id FROM vacancy_versions WHERE job_id = ?").get(input.matchedJobId) as { id: string } | null
+      : null;
+    if (!logical && !matched) {
       this.db.query("INSERT INTO logical_vacancies (id, stable_key, canonical_url, first_seen_at, last_seen_at, consecutive_misses, lifecycle_status) VALUES (?, ?, ?, ?, ?, 0, 'active')")
         .run(logicalVacancyId, stableKey, canonicalUrl, observedAt, observedAt);
     }
-    const resolvedId = logical?.id ?? logicalVacancyId;
+    const resolvedId = logical?.id ?? matched?.id ?? logicalVacancyId;
     const existingVersion = this.db.query("SELECT logical_vacancy_id, version FROM vacancy_versions WHERE job_id = ?").get(input.jobId) as { logical_vacancy_id: string; version: number } | null;
     if (existingVersion && existingVersion.logical_vacancy_id !== resolvedId) throw new Error(`Job ${input.jobId} is already attached to another logical vacancy`);
     let version = existingVersion?.version;
@@ -606,6 +614,24 @@ export class StorageRepository {
 
   listApplications(): ApplicationRecord[] {
     return this.db.query("SELECT * FROM applications ORDER BY updated_at DESC, job_id").all() as ApplicationRecord[];
+  }
+
+  updateApplicationCheckpoint(jobId: string, nextAction: string, note?: string): ApplicationRecord {
+    requireValue(jobId, "application.jobId");
+    requireValue(nextAction, "application.nextAction");
+    const current = this.db.query("SELECT * FROM applications WHERE job_id = ?").get(jobId) as ApplicationRecord | null;
+    if (!current) throw new Error(`Application ${jobId} must be shortlisted before preparing answers`);
+    if (!["shortlisted", "ready_for_review"].includes(current.status)) {
+      throw new Error(`Application ${jobId} must be shortlisted or ready_for_review before preparing answers`);
+    }
+    const timestamp = now();
+    const write = this.db.transaction(() => {
+      this.db.query("UPDATE applications SET next_action = ?, updated_at = ? WHERE job_id = ?").run(nextAction, timestamp, jobId);
+      this.db.query("INSERT INTO application_events (job_id, status, actor, note, created_at) VALUES (?, ?, ?, ?, ?)")
+        .run(jobId, current.status, "answer_matrix", note ?? null, timestamp);
+    });
+    write.immediate();
+    return this.db.query("SELECT * FROM applications WHERE job_id = ?").get(jobId) as ApplicationRecord;
   }
 
   listApplicationEvents(jobId: string): ApplicationEventRecord[] {

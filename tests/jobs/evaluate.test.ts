@@ -60,6 +60,11 @@ test("blocks mandatory and rotating nights using the verified candidate constrai
   expect(rotating.gates).toContainEqual(expect.objectContaining({ id: "shift", status: "BLOCKED" }));
 });
 
+test("does not let a no-rotation clause hide a mandatory night shift", async () => {
+  const result = await evaluateText("# NOC Technician\nShift: Night shifts required; no rotating shifts\nSkills: monitoring and tickets\n");
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "shift", status: "BLOCKED" }));
+});
+
 test("blocks reliable role requirements that contradict verified candidate facts", async () => {
   const car = await evaluateFixture("own-car.md");
   const german = await evaluateFixture("german-b2.md");
@@ -123,6 +128,29 @@ test("blocks insufficient German when English is not explicitly accepted as an a
     const result = await evaluateText(`# Hardware Technician\nSkills: PC hardware\nLanguages: ${languages}\n`);
     expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "BLOCKED" }));
   }
+});
+
+test("keeps mandatory and optional German clauses scoped independently", async () => {
+  const required = await evaluateText("# Hardware Technician\nSkills: PC hardware\nLanguages: German B1 required; German C1 preferred\n");
+  expect(required.gates).toContainEqual(expect.objectContaining({ id: "language", status: "BLOCKED" }));
+
+  const optional = await evaluateText("# Hardware Technician\nSkills: PC hardware\nLanguages: Gute Deutschkenntnisse wünschenswert; English required\n");
+  expect(optional.gates).toContainEqual(expect.objectContaining({ id: "language", status: "PASS" }));
+});
+
+test("does not treat an optional driving licence as mandatory", async () => {
+  const extracted = extractVacancy("# Field Technician\nCar: Führerschein B wünschenswert\nSkills: PC hardware\n");
+  const result = evaluateVacancy({ id: "optional_licence", title: "Field Technician", company: null, location: null }, extracted, {
+    ...workspace,
+    profile: {
+      ...(workspace.profile as object),
+      transport: {
+        has_car: { value: false, verification_status: "user_confirmed", provenance: [{ source_type: "user_statement", source_ref: "test" }] },
+        driver_licence: { value: false, verification_status: "user_confirmed", provenance: [{ source_type: "user_statement", source_ref: "test" }] },
+      },
+    },
+  }, "2026-07-12");
+  expect(result.gates).not.toContainEqual(expect.objectContaining({ id: "transport", status: "BLOCKED" }));
 });
 
 test("treats English accepted in addition to German as an additive requirement", async () => {
@@ -205,6 +233,35 @@ test("passes a sufficient verified German level and includes its profile fact in
   expect(result.survival).toBe(100);
 });
 
+test("blocks mandatory German B1 for an A2 candidate without an English alternative", async () => {
+  const result = await evaluateText("# Hardware Technician\nSkills: PC hardware\nLanguages: German B1 required\n");
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "BLOCKED", critical: true, facts: ["profile.languages.german"] }));
+  expect(result.tier).toBe("C");
+});
+
+test("blocks qualitative binding German fluency phrasing (gute Deutschkenntnisse)", async () => {
+  const result = await evaluateText("# Hardware Technician\nSkills: PC hardware\nLanguages: Gute Deutschkenntnisse erforderlich\n");
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "BLOCKED", critical: true, facts: ["profile.languages.german"] }));
+});
+
+test("blocks fließende/verhandlungssichere Deutschkenntnisse as binding German", async () => {
+  for (const languages of ["Fließende Deutschkenntnisse vorausgesetzt", "Verhandlungssichere Deutschkenntnisse erforderlich"]) {
+    const result = await evaluateText(`# Hardware Technician\nSkills: PC hardware\nLanguages: ${languages}\n`);
+    expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "BLOCKED", critical: true, facts: ["profile.languages.german"] }));
+  }
+});
+
+test("blocks German phone helpdesk / Kundenservice am Telefon for an A2 candidate", async () => {
+  const result = await evaluateText("# Hardware Technician\nSkills: PC hardware\nLanguages: German phone helpdesk support required\n");
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "BLOCKED", critical: true, facts: ["profile.languages.german"] }));
+  expect(result.tier).toBe("C");
+});
+
+test("does not block a German customer-contact role when an English alternative is explicitly accepted", async () => {
+  const result = await evaluateText("# Hardware Technician\nSkills: PC hardware\nLanguages: German phone helpdesk; English accepted as alternative\n");
+  expect(result.gates.find((g) => g.id === "language")?.status).not.toBe("BLOCKED");
+});
+
 test("keeps an unknown shift as VERIFY rather than assuming it is suitable", async () => {
   const result = await evaluateFixture("unknown-shift.md");
   expect(result.gates).toContainEqual(expect.objectContaining({ id: "shift", status: "VERIFY" }));
@@ -252,6 +309,34 @@ test("does not let mixed transport or physical wording hide mandatory requiremen
   expect(result.gates).toContainEqual(expect.objectContaining({ id: "physical", status: "BLOCKED", critical: true }));
   expect(result.gates.find((gate) => gate.id === "transport")?.status).not.toBe("PASS");
   expect(result.gates.find((gate) => gate.id === "physical")?.status).not.toBe("PASS");
+});
+
+test("blocks prolonged standing as a disqualifying physical demand", async () => {
+  const result = await evaluateText("# Hardware Technician\nPhysical: Prolonged standing required\nSkills: PC hardware\n");
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "physical", status: "BLOCKED", critical: true }));
+  expect(result.tier).toBe("C");
+});
+
+test("blocks repeated heavy lifting even without 'continuous heavy work' phrasing", async () => {
+  const result = await evaluateText("# Hardware Technician\nPhysical: Repeated heavy lifting required\nSkills: PC hardware\n");
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "physical", status: "BLOCKED", critical: true }));
+});
+
+test("blocks mass rack install/decommission as the main duty when stated in skills", async () => {
+  const result = await evaluateText("# Hardware Technician\nSkills: Mass racking of 100+ servers per shift\n");
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "scope", status: "BLOCKED", critical: true }));
+});
+
+test("blocks constant field travel for a no-car candidate", async () => {
+  const result = await evaluateText("# Hardware Technician\nPhysical: Constant field travel required\nSkills: PC hardware\n");
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "physical", status: "BLOCKED", critical: true }));
+});
+
+test("does not block occasional server swaps or light carrying as acceptable", async () => {
+  const result = await evaluateText("# Hardware Technician\nPhysical: Occasional server swaps, light carrying\nSkills: PC hardware, racking\n");
+  // Neither scope nor physical should be BLOCKED for occasional work.
+  expect(result.gates).not.toContainEqual(expect.objectContaining({ id: "scope", status: "BLOCKED" }));
+  expect(result.gates).not.toContainEqual(expect.objectContaining({ id: "physical", status: "BLOCKED" }));
 });
 
 test("keeps an unreliable deadline VERIFY rather than treating it as current", async () => {

@@ -168,7 +168,19 @@ export async function importVacancy(request: ImportRequest, repository: StorageR
       provenance: [{ source_type: "local_import", source_ref: source.sourceLocator ?? "pasted_text" }],
     },
   };
-  const observation = { jobId, rawHash: source.rawHash, canonicalUrl, stableSourceId: request.sourceId, discoveryRunId: options.discoveryRunId, observedAt: options.observedAt };
+  const matchedJob = (canonicalUrl ? repository.findJobByCanonicalUrl(canonicalUrl) : null)
+    ?? (request.sourceId ? repository.findJobBySourceId(request.sourceId) : null)
+    ?? (values.title && values.company && values.location ? repository.findJobByNormalizedTriple(values.title, values.company, values.location) : null)
+    ?? repository.findJobByRawHash(source.rawHash);
+  const observation = {
+    jobId,
+    rawHash: source.rawHash,
+    canonicalUrl,
+    stableSourceId: request.sourceId,
+    matchedJobId: matchedJob?.id,
+    discoveryRunId: options.discoveryRunId,
+    observedAt: options.observedAt,
+  };
   if (options.discoveryRunId) {
     const observed = repository.importJobAndObserve(input, observation);
     return { id: jobId, reused: observed.existing, sourceHash: source.rawHash, ...values, logicalVacancyId: observed.logicalVacancyId, version: observed.version };

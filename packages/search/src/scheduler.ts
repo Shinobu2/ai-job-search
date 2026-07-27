@@ -124,6 +124,18 @@ export function locationActionability(location: string | null, cities: string[])
   return inArea ? "actionable" : "out_of_area";
 }
 
+export function prioritizeByLocation<T>(
+  rows: T[],
+  locationOf: (row: T) => string | null,
+  cities: string[],
+): T[] {
+  const rank = { actionable: 0, unknown: 1, out_of_area: 2 } as const;
+  return rows
+    .map((row, index) => ({ row, index, area: locationActionability(locationOf(row), cities) }))
+    .sort((left, right) => rank[left.area] - rank[right.area] || left.index - right.index)
+    .map(({ row }) => row);
+}
+
 export function parseJson<T>(response: Response, label: string): Promise<T> {
   return response.json().catch(() => {
     throw new ReadFailure(`${label} returned invalid JSON`, "invalid_json", false);
