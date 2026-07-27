@@ -34,7 +34,7 @@ test("profile keeps unknown candidate facts explicit and established facts user-
     provenance: [],
   });
   expect(profile.locations.radius_km).toMatchObject({
-    value: 40,
+    value: 80,
     verification_status: "user_confirmed",
     provenance: [
       {
@@ -81,6 +81,18 @@ test("profile rejects user-confirmed facts without user-statement provenance", a
     { source_type: "document", source_ref: "unrelated-document" },
   ];
   expect(() => validateWorkspaceFile("profile", profile)).toThrow();
+});
+
+test("profile rejects malformed adaptive availability dates", async () => {
+  for (const value of [123, "not-a-date", "2026-99-99"]) {
+    const profile = await readExample("profile");
+    profile.availability.relocation_date = {
+      value,
+      verification_status: "unknown",
+      provenance: [],
+    };
+    expect(() => validateWorkspaceFile("profile", profile)).toThrow();
+  }
 });
 
 test("evidence rejects completed or employment claims for planned projects", async () => {

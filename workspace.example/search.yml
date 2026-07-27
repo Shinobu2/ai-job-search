@@ -13,11 +13,19 @@ discovery:
         - Langen
         - Kelsterbach
         - Darmstadt
+        - Wiesbaden
+        - Mainz
+        - Rüsselsheim am Main
+        - Raunheim
+        - Hanau
+        - Bad Homburg
       keywords:
         - data center technician
+        - remote hands
+        - NOC technician
+        - IT support English
         - rechenzentrumstechniker
         - it systemelektroniker
-        - remote hands
       max_pages: 1
       page_size: 10
     - id: jobsuche
@@ -32,10 +40,18 @@ discovery:
         - Langen
         - Kelsterbach
         - Darmstadt
+        - Wiesbaden
+        - Mainz
+        - Rüsselsheim am Main
+        - Raunheim
+        - Hanau
+        - Bad Homburg
       keywords:
         - data center technician
+        - remote hands
+        - NOC technician
+        - IT support English
         - rechenzentrumstechniker
         - it systemelektroniker
-        - remote hands
       max_pages: 1
       page_size: 10

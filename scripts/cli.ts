@@ -9,6 +9,8 @@ import { CapabilityRegistry } from "../packages/storage/src/capabilities";
 import { openDatabase } from "../packages/storage/src/database";
 import { migrate } from "../packages/storage/src/migrate";
 import { loadWorkspace } from "../packages/core/src/workspace";
+import { dateOnlyInTimeZone } from "../packages/core/src/availability";
+import { prepareApplicationAnswerMatrix } from "../packages/core/src/application-answers";
 import { extractVacancy } from "../packages/jobs/src/extract";
 import { buildEvaluationInput, evaluateVacancy } from "../packages/jobs/src/evaluate";
 import { importVacancy } from "../packages/jobs/src/import";
@@ -18,13 +20,22 @@ import { discoverFreehire, type FreehireSourceConfig } from "../packages/search/
 import { discoverJobsuche, type JobsucheSourceConfig } from "../packages/search/src/jobsuche";
 import { loadEmployerRegistry } from "../packages/search/src/employer-registry";
 import { discoverPersonioEmployer } from "../packages/search/src/personio";
+import { discoverGreenhouseEmployer } from "../packages/search/src/greenhouse";
+import { discoverLeverEmployer } from "../packages/search/src/lever";
 import { type DiscoveryCounters, type SourceDiagnostic } from "../packages/search/src/types";
 import { generateDocumentPacket, hashEvidenceSnapshot } from "../packages/documents/src/generate";
+import { buildAtsDocx, lintAtsDocx } from "../packages/documents/src/ats-docx";
 
 type JobFlags = { id?: string; file?: string; text?: string; status?: string; next?: string; note?: string; confirm?: string };
 
-function sha256(value: string): string {
+function sha256(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function postingWorkingLanguage(rawContent: string): "en" | "de" {
+  if (/(?:working language|arbeitssprache)\s*:?\s*(?:german|deutsch)\b/i.test(rawContent)
+    && !/\benglish\s+(?:accepted|allowed|sufficient|alternative)\b/i.test(rawContent)) return "de";
+  return "en";
 }
 
 function parseFlags(arguments_: string[]): JobFlags {
@@ -125,16 +136,23 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
     try {
       let count = 0;
       let processed = 0;
-      for (const employer of registry.employers.filter((entry) => entry.enabled && entry.policy === "public_ats_endpoint" && entry.ats === "personio")) {
+      for (const employer of registry.employers.filter((entry) => entry.enabled && entry.policy === "public_ats_endpoint" && ["personio", "greenhouse", "lever"].includes(entry.ats))) {
         try {
           const workspace = await loadWorkspace(root);
-          const batch = await discoverPersonioEmployer(employer, repository, workspace, { maxResults: MODEL_REVIEW_LIMIT - processed });
-          processed += batch.jobs.length;
-          printDiscoveryDiagnostics(`Personio ${employer.id}`, batch.counters, batch.diagnostics);
-          for (const job of batch.jobs) {
+          const discoveryEmployer = { ...employer, cities: registry.cities };
+          const batch = employer.ats === "greenhouse"
+            ? await discoverGreenhouseEmployer(discoveryEmployer, repository, workspace, { maxResults: MODEL_REVIEW_LIMIT - processed })
+            : employer.ats === "lever"
+              ? await discoverLeverEmployer(discoveryEmployer, repository, workspace, { maxResults: MODEL_REVIEW_LIMIT - processed })
+              : await discoverPersonioEmployer(discoveryEmployer, repository, workspace, { maxResults: MODEL_REVIEW_LIMIT - processed });
+          const atsLabel = employer.ats === "greenhouse" ? "Greenhouse" : employer.ats === "lever" ? "Lever" : "Personio";
+          const reviewJobs = batch.jobs.filter((job) => job.actionable);
+          processed += reviewJobs.length;
+          printDiscoveryDiagnostics(`${atsLabel} ${employer.id}`, batch.counters, batch.diagnostics);
+          for (const job of reviewJobs) {
             console.log(`${job.title} — ${job.company}`);
             console.log(`Location: ${job.location ?? "unknown"}`);
-            console.log(`Source: Personio ${job.sourceId} — ${job.sourceUrl}`);
+            console.log(`Source: ${atsLabel} ${job.sourceId} — ${job.sourceUrl}`);
             console.log(`Import: ${job.reused ? "reused" : "created"}\n`);
             count += 1;
           }
@@ -160,8 +178,8 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
   try {
     const jobsuche = source.id === "jobsuche";
     const batch = jobsuche
-      ? await discoverJobsuche(source, repository, workspace)
-      : await discoverFreehire(source, repository, workspace);
+      ? await discoverJobsuche(source, repository, workspace, { maxResults: MODEL_REVIEW_LIMIT })
+      : await discoverFreehire(source, repository, workspace, { maxResults: MODEL_REVIEW_LIMIT });
     const sourceLabel = jobsuche ? "Jobsuche" : "FreeHire";
     const displayed = batch.jobs.slice(0, MODEL_REVIEW_LIMIT);
     console.log(`${sourceLabel} discovered: ${batch.jobs.length} | raw results for model review: ${displayed.length}`);
@@ -207,7 +225,15 @@ async function runDocuments(root: string, command: string | undefined, arguments
     const evaluation = repository.readEvaluation(flags.id);
     const evaluationAttestation = repository.readCurrentEvaluationAttestation(flags.id);
     if (!job || !evaluation || !evaluationAttestation) throw new Error(`Evaluated job is unavailable: ${flags.id}`);
-    const packet = generateDocumentPacket({ title: job.title ?? "Unknown role", company: job.company ?? "Unknown company", evaluation, workspace: workspace as never });
+    const asOfDate = dateOnlyInTimeZone(new Date(), "Europe/Berlin");
+    const workingLanguage = postingWorkingLanguage(job.rawContent);
+    const packet = generateDocumentPacket({ title: job.title ?? "Unknown role", company: job.company ?? "Unknown company", evaluation, workspace: workspace as never, asOfDate, workingLanguage });
+    const atsDocx = await buildAtsDocx(packet.atsDocument);
+    const documentQa = await lintAtsDocx(atsDocx, packet.atsDocument);
+    const qaContents = `${JSON.stringify(documentQa, null, 2)}\n`;
+    const qaFailures = documentQa.checks.filter((check) => check.status === "fail").map((check) => `document.qa.${check.id}`);
+    const readyForSubmission = packet.ready_for_submission && qaFailures.length === 0;
+    const missing = [...new Set([...packet.missing, ...qaFailures])];
     const packetId = `packet_${randomUUID()}`;
     const parentDirectory = join(root, "workspace", "documents", flags.id);
     const directory = join(parentDirectory, packetId);
@@ -219,6 +245,8 @@ async function runDocuments(root: string, command: string | undefined, arguments
       german_cv: { file: "cv-de.md", contents: `${packet.germanCv}\n` },
       english_cover_letter: { file: "cover-letter-en.md", contents: `${packet.englishCoverLetter}\n` },
       german_cover_letter: { file: "cover-letter-de.md", contents: `${packet.germanCoverLetter}\n` },
+      ats_docx: { file: "cv-ats.docx", contents: atsDocx },
+      document_qa: { file: "document-qa.json", contents: qaContents },
     };
     const artifactHashes = Object.fromEntries(Object.entries(artifacts).map(([slot, artifact]) => [slot, sha256(artifact.contents)]));
     const evidenceSnapshotHash = hashEvidenceSnapshot((workspace as { evidence: unknown }).evidence);
@@ -229,8 +257,15 @@ async function runDocuments(root: string, command: string | undefined, arguments
       evaluation_fingerprint: evaluation.fingerprint,
       evidence_snapshot_hash: evidenceSnapshotHash,
       artifact_hashes: artifactHashes,
-      ready_for_submission: packet.ready_for_submission,
-      missing: packet.missing,
+      ready_for_submission: readyForSubmission,
+      missing,
+      working_language: workingLanguage,
+      document_qa: documentQa,
+      // Adaptive-availability provenance (v5 §11): when the profile carried
+      // verified relocation/available-from dates, the exact text emitted in
+      // the cover-letter drafts is recorded here for audit.
+      as_of_date: asOfDate,
+      availability_text_used: { en: packet.availabilityTextEn, de: packet.availabilityTextDe },
     };
     const metadataContents = `${JSON.stringify(metadata, null, 2)}\n`;
     let promoted = false;
@@ -239,7 +274,7 @@ async function runDocuments(root: string, command: string | undefined, arguments
     try {
       await mkdir(stagingDirectory);
       await Promise.all([
-        ...Object.values(artifacts).map((artifact) => writeFile(join(stagingDirectory, artifact.file), artifact.contents, "utf8")),
+        ...Object.values(artifacts).map((artifact) => writeFile(join(stagingDirectory, artifact.file), artifact.contents)),
         writeFile(join(stagingDirectory, "metadata.json"), metadataContents, "utf8"),
       ]);
       await rename(stagingDirectory, directory);
@@ -252,7 +287,7 @@ async function runDocuments(root: string, command: string | undefined, arguments
         evaluationFingerprint: evaluation.fingerprint,
         evidenceSnapshotHash,
         artifactHashes: { ...artifactHashes, metadata: sha256(metadataContents) },
-        ready: packet.ready_for_submission,
+        ready: readyForSubmission,
         directory: relativeDirectory,
       });
       recorded = true;
@@ -261,7 +296,7 @@ async function runDocuments(root: string, command: string | undefined, arguments
       if (promoted && !recorded) await rm(directory, { recursive: true, force: true });
       throw error;
     }
-    console.log(JSON.stringify({ job_id: flags.id, packet_id: storedPacket.id, directory: relativeDirectory, ready_for_submission: packet.ready_for_submission, missing: packet.missing, hashes: storedPacket.artifactHashes }, null, 2));
+    console.log(JSON.stringify({ job_id: flags.id, packet_id: storedPacket.id, directory: relativeDirectory, ready_for_submission: readyForSubmission, missing, hashes: storedPacket.artifactHashes }, null, 2));
   } finally {
     db.close();
   }
@@ -282,6 +317,28 @@ async function runApplications(root: string, command: string | undefined, argume
       console.log(JSON.stringify(repository.listApplicationEvents(flags.id), null, 2));
       return;
     }
+    if (command === "prepare") {
+      requireOnly(flags, ["id", "file"], "applications prepare");
+      if (!flags.id || !flags.file) throw new Error("applications prepare requires --id and --file");
+      const packet = repository.readCurrentDocumentPacket(flags.id);
+      if (!packet) throw new Error(`Application ${flags.id} requires a current document packet`);
+      const input = JSON.parse(await readFile(flags.file, "utf8")) as unknown;
+      const workspace = await loadWorkspace(root);
+      const locale = input && typeof input === "object" && (input as { locale?: unknown }).locale === "de" ? "de" : "en";
+      const asOfDate = dateOnlyInTimeZone(new Date(), "Europe/Berlin");
+      const matrix = prepareApplicationAnswerMatrix(input, workspace.profile as Record<string, unknown>, asOfDate, locale);
+      const directory = join(root, ...packet.directory.split("/"));
+      const destination = join(directory, "application-answers.json");
+      const temporary = join(directory, `.application-answers.${process.pid}.tmp`);
+      await writeFile(temporary, `${JSON.stringify({ job_id: flags.id, as_of_date: asOfDate, ...matrix }, null, 2)}\n`, "utf8");
+      await rename(temporary, destination);
+      const nextAction = matrix.blockers.length
+        ? `Resolve answer-matrix blockers: ${matrix.blockers.join("; ")}`
+        : "Review prepared answer matrix; Submit still requires task-specific approval.";
+      repository.updateApplicationCheckpoint(flags.id, nextAction, `Prepared ${join(packet.directory, "application-answers.json").replace(/\\/g, "/")}`);
+      console.log(JSON.stringify({ job_id: flags.id, file: join(packet.directory, "application-answers.json").replace(/\\/g, "/"), blockers: matrix.blockers, submit_authorized: false }, null, 2));
+      return;
+    }
     if (command === "set") {
       requireOnly(flags, ["id", "status", "next", "note", "confirm"], "applications set");
       const statuses = ["shortlisted", "ready_for_review", "user_submitted", "interview", "offer", "rejected", "withdrawn"] as const;
@@ -291,7 +348,7 @@ async function runApplications(root: string, command: string | undefined, argume
       console.log(JSON.stringify(repository.setApplicationStatus(flags.id, status, { nextAction: flags.next, note: flags.note, actor: explicitlyConfirmed ? "user_confirmed_cli" : "user", confirmed: explicitlyConfirmed }), null, 2));
       return;
     }
-    throw new Error("Usage: applications <set|list|history>");
+    throw new Error("Usage: applications <set|list|history|prepare>");
   } finally { db.close(); }
 }
 

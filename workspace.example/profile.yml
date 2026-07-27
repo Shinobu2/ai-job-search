@@ -22,7 +22,7 @@ locations:
     verification_status: user_confirmed
     provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]
   radius_km:
-    value: 40
+    value: 80
     verification_status: user_confirmed
     provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]
   public_transport_required:
@@ -34,6 +34,17 @@ availability:
     value: { earliest: '2026-08-15', latest: '2026-08-31' }
     verification_status: user_confirmed
     provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]
+  # Optional adaptive-date fields consumed by packages/core/src/availability.ts.
+  # Example uses placeholder dates; the real values live in the ignored local
+  # workspace/profile.yml, never in this public fixture.
+  relocation_date:
+    value: null
+    verification_status: unknown
+    provenance: []
+  available_from:
+    value: null
+    verification_status: unknown
+    provenance: []
 transport:
   driver_licence:
     value: true
@@ -68,11 +79,11 @@ legal:
     provenance: []
 constraints:
   night_shifts:
-    value: blocked
+    value: allowed_if_role_is_not_high_stress
     verification_status: user_confirmed
     provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]
   continuous_heavy_work:
-    value: blocked
+    value: avoid_continuous_heavy_work; occasional lifting and carrying is acceptable
     verification_status: user_confirmed
     provenance: [{ source_type: user_statement, source_ref: initial_project_specification }]
 compensation:

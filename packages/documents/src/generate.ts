@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { availabilityTextFromProfile } from "../../core/src/availability";
+import type { AtsDocumentModel } from "./ats-docx";
 
 type Provenance = { source_type?: string; source_ref?: string };
 type Record_ = { id: string; kind: string; statement: string; reviewer_status: string; provenance?: Provenance[] };
@@ -30,13 +32,17 @@ export type DocumentPacket = {
   germanCv: string;
   englishCoverLetter: string;
   germanCoverLetter: string;
+  /** Adaptive availability text used in the drafts, or null when not generated. */
+  availabilityTextEn: string | null;
+  availabilityTextDe: string | null;
+  atsDocument: AtsDocumentModel;
 };
 
 export function hashEvidenceSnapshot(evidence: unknown): string {
   return createHash("sha256").update(JSON.stringify(evidence)).digest("hex");
 }
 
-export function generateDocumentPacket(input: { title: string; company: string; evaluation: { mappings: Mapping[]; gates: Gate[]; verdict?: string; tier?: string }; workspace: { profile: Record<string, unknown>; evidence: { records: Record_[] } } }): DocumentPacket {
+export function generateDocumentPacket(input: { title: string; company: string; evaluation: { mappings: Mapping[]; gates: Gate[]; verdict?: string; tier?: string }; workspace: { profile: Record<string, unknown>; evidence: { records: Record_[] } }; asOfDate?: string; workingLanguage?: "en" | "de" }): DocumentPacket {
   const identity = input.workspace.profile.identity as { name?: VerifiedField; email?: VerifiedField; phone?: VerifiedField } | undefined;
   const missing = ["name", "email", "phone"].filter((key) => !verifiedFactValue(identity?.[key as keyof typeof identity])).map((key) => `profile.identity.${key}`);
   const allowedIds = new Set(input.evaluation.mappings.filter((mapping) => ["proven", "partial", "transferable"].includes(mapping.status)).flatMap((mapping) => mapping.evidenceIds));
@@ -50,10 +56,24 @@ export function generateDocumentPacket(input: { title: string; company: string; 
   if (input.evaluation.gates.some((gate) => gate.status === "VERIFY" && gate.critical)) missing.push("evaluation.critical_conditions_verified");
   const evidenceEn = evidence.length ? evidence.map((record) => `- ${record.statement} [${record.id}]`).join("\n") : "- No verified role-specific evidence mapped yet.";
   const evidenceDe = evidence.length ? evidence.map((record) => `- ${record.statement} [${record.id}]`).join("\n") : "- Noch keine verifizierten rollenspezifischen Nachweise zugeordnet.";
-  const englishCv = `# CV draft — ${input.title}\n\nTarget company: ${input.company}\n\n## Evidence-backed capabilities\n${evidenceEn}\n\n## Verify before application\n${verify.map((item) => `- ${item}`).join("\n") || "- None recorded."}`;
-  const germanCv = `# Lebenslauf-Entwurf — ${input.title}\n\nZielunternehmen: ${input.company}\n\n## Nachweisbare Kompetenzen\n${evidenceDe}\n\n## Vor der Bewerbung prüfen\n${verify.map((item) => `- ${item}`).join("\n") || "- Keine offenen Punkte erfasst."}`;
-  const englishCoverLetter = `# Cover letter draft\nI am interested in the ${input.title} position at ${input.company}. My relevant claims are limited to the evidence listed above.`;
-  const germanCoverLetter = `# Anschreiben-Entwurf\nIch interessiere mich für die Position ${input.title} bei ${input.company}. Meine relevanten Angaben beschränken sich auf die oben aufgeführten Nachweise.`;
+  const englishCv = `# CV draft — ${input.title}\n\nTarget company: ${input.company}\n\n## Evidence-backed capabilities\n${evidenceEn}`;
+  const germanCv = `# Lebenslauf-Entwurf — ${input.title}\n\nZielunternehmen: ${input.company}\n\n## Nachweisbare Kompetenzen\n${evidenceDe}`;
+  const availabilityTextEn = input.asOfDate ? availabilityTextFromProfile(input.workspace.profile, input.asOfDate, "en") : null;
+  const availabilityTextDe = input.asOfDate ? availabilityTextFromProfile(input.workspace.profile, input.asOfDate, "de") : null;
+  const englishCoverLetter = input.workingLanguage === "de" ? "" : `# Cover letter draft\nI am interested in the ${input.title} position at ${input.company}. My relevant claims are limited to the evidence listed above.${availabilityTextEn ? `\n${availabilityTextEn}` : ""}`;
+  const germanCoverLetter = input.workingLanguage === "en" ? "" : `# Anschreiben-Entwurf\nIch interessiere mich für die Position ${input.title} bei ${input.company}. Meine relevanten Angaben beschränken sich auf die oben aufgeführten Nachweise.${availabilityTextDe ? `\n${availabilityTextDe}` : ""}`;
+  const workingLanguage = input.workingLanguage ?? "en";
+  const atsDocument: AtsDocumentModel = {
+    language: workingLanguage,
+    name: verifiedFactValue(identity?.name),
+    email: verifiedFactValue(identity?.email),
+    phone: verifiedFactValue(identity?.phone),
+    title: input.title,
+    company: input.company,
+    evidence: evidence.map((record) => record.statement),
+    verify,
+    availability: workingLanguage === "de" ? availabilityTextDe : availabilityTextEn,
+  };
   return {
     ready_for_submission: missing.length === 0,
     missing,
@@ -63,5 +83,8 @@ export function generateDocumentPacket(input: { title: string; company: string; 
     germanCv,
     englishCoverLetter,
     germanCoverLetter,
+    availabilityTextEn,
+    availabilityTextDe,
+    atsDocument,
   };
 }

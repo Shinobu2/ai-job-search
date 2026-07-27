@@ -5,10 +5,12 @@ if (!endpoint) throw new Error("PERSONIO_TEST_ENDPOINT is required by the Person
 const realFetch = globalThis.fetch;
 globalThis.fetch = ((input: string | URL, init?: RequestInit) => {
   const requested = new URL(String(input));
-  if (requested.origin !== "https://maincubes-1.jobs.personio.de") {
-    throw new Error(`unexpected Personio origin: ${requested.origin}`);
+  if (["https://maincubes-1.jobs.personio.com", "https://maincubes-1.jobs.personio.de"].includes(requested.origin)) {
+    return realFetch(new URL(`${requested.pathname}${requested.search}`, endpoint), init);
   }
-  return realFetch(new URL(`${requested.pathname}${requested.search}`, endpoint), init);
+  if (requested.origin === "https://boards-api.greenhouse.io") return Promise.resolve(Response.json({ jobs: [] }));
+  if (requested.origin === "https://api.lever.co") return Promise.resolve(Response.json([]));
+  throw new Error(`unexpected employer ATS origin: ${requested.origin}`);
 }) as typeof fetch;
 
 export {};

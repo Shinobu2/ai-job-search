@@ -460,11 +460,11 @@ test("FreeHire imports and observes out-of-area and unknown locations before mar
   try {
     const batch = await discoverFreehire({ ...source, cities: ["Frankfurt"] }, new StorageRepository(db), workspace as never);
     expect(batch.jobs.map(({ sourceId, actionable }) => ({ sourceId, actionable }))).toEqual([
-      { sourceId: "freehire:outside", actionable: false },
       { sourceId: "freehire:unknown", actionable: true },
+      { sourceId: "freehire:outside", actionable: false },
     ]);
     expect(batch.counters).toMatchObject({ imported: 2, skipped: 1, failed: 0 });
-    expect(batch.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["out_of_area", "location_unknown"]);
+    expect(batch.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["location_unknown", "out_of_area"]);
     expect(db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 2 });
     expect(db.query("SELECT COUNT(*) AS count FROM discovery_observations").get()).toEqual({ count: 2 });
   } finally {

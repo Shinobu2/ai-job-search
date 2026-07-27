@@ -4,7 +4,7 @@ import { extractVacancy } from "../../jobs/src/extract";
 import { importVacancy } from "../../jobs/src/import";
 import type { StoredJob, StoredJobSource, StorageRepository } from "../../storage/src/repository";
 import type { EmployerRegistryEntry } from "./employer-registry";
-import { diagnosticFromError, discoveryRunIdentity, discoveryStatus, fetchWithRetry, locationActionability, ReadFailure } from "./scheduler";
+import { diagnosticFromError, discoveryRunIdentity, discoveryStatus, fetchWithRetry, locationActionability, prioritizeByLocation, ReadFailure } from "./scheduler";
 import { emptyCounters, type DiscoveryBatch, type DiscoveryCounters, type DiscoveryOptions, type DiscoveryScopeSummary, type DiscoveryStatus, type SourceDiagnostic } from "./types";
 
 export type PersonioJob = { id: string; title: string; location: string | null; locations: string[]; description: string };
@@ -157,8 +157,10 @@ export function parsePersonioXml(xml: string): PersonioJob[] {
 function endpointFor(employer: EmployerRegistryEntry): URL {
   if (!employer.enabled || employer.policy !== "public_ats_endpoint" || employer.ats !== "personio") throw new Error(`Employer ${employer.id} is not approved for Personio reads`);
   const career = new URL(employer.career_url);
-  if (career.protocol !== "https:" || !career.hostname.endsWith(".jobs.personio.de")) throw new Error(`Employer ${employer.id} has an invalid Personio endpoint`);
-  return new URL("/xml", career.origin);
+  if (career.protocol !== "https:" || ![".jobs.personio.com", ".jobs.personio.de"].some((suffix) => career.hostname.endsWith(suffix))) {
+    throw new Error(`Employer ${employer.id} has an invalid Personio endpoint`);
+  }
+  return new URL("/xml?language=en", career.origin);
 }
 
 export async function readPersonioEmployer(
@@ -223,8 +225,12 @@ export async function discoverPersonioEmployer(
     Object.assign(counters, read.counters);
     diagnostics.push(...read.diagnostics);
     scope = read.scope;
-    const limit = Math.max(0, Math.min(options.maxResults ?? 25, 25));
-    const selected = read.jobs.slice(0, limit);
+    const limit = Math.max(0, Math.min(options.maxResults ?? 12, 12));
+    const selected = prioritizeByLocation(
+      read.jobs,
+      (job) => job.locations.join(", ") || null,
+      employer.cities,
+    ).slice(0, limit);
     counters.skipped += Math.max(0, read.jobs.length - selected.length);
 
     for (const job of selected) {

@@ -73,7 +73,7 @@ test("Personio reader uses only approved registry endpoints and performs GET-onl
     expect(init?.method ?? "GET").toBe("GET");
     return new Response(`<workzag-jobs><position><id>42</id><name>Technician</name><office>Frankfurt</office></position></workzag-jobs>`, { status: 200 });
   }) as typeof fetch);
-  expect(requested).toEqual(["https://maincubes-1.jobs.personio.de/xml"]);
+  expect(requested).toEqual(["https://maincubes-1.jobs.personio.de/xml?language=en"]);
   expect(batch.jobs[0]?.id).toBe("42");
   expect(batch.counters).toEqual({ searched: 1, detailed: 1, imported: 0, skipped: 0, failed: 0 });
   await expect(readPersonioEmployer({ id: "manual", name: "Manual", cities: [], career_url: "https://example.com/jobs", ats: "unknown", policy: "manual_only", enabled: true })).rejects.toThrow("not approved");
@@ -115,14 +115,14 @@ test("Personio discovery imports and observes jobs before actionability filterin
     });
     expect(batch.jobs.map(({ sourceId, actionable }) => ({ sourceId, actionable }))).toEqual([
       { sourceId: "personio:maincubes:42", actionable: true },
-      { sourceId: "personio:maincubes:43", actionable: false },
       { sourceId: "personio:maincubes:44", actionable: true },
+      { sourceId: "personio:maincubes:43", actionable: false },
     ]);
     expect(batch.status).toBe("success");
     expect(batch.scope).toEqual({ planned: 1, completed: 1, failed: 0 });
     expect(batch.jobs[0]).toMatchObject({ stableSourceId: "personio:maincubes:42", logicalVacancyId: expect.stringContaining("vacancy_"), version: 1 });
     expect(batch.counters).toEqual({ searched: 1, detailed: 3, imported: 3, skipped: 1, failed: 0 });
-    expect(batch.diagnostics.map((entry) => entry.code)).toEqual(["out_of_area", "location_unknown"]);
+    expect(batch.diagnostics.map((entry) => entry.code)).toEqual(["location_unknown", "out_of_area"]);
     expect(db.query("SELECT COUNT(*) AS count FROM discovery_observations").get()).toEqual({ count: 3 });
     expect(db.query("SELECT status FROM discovery_runs").get()).toEqual({ status: "success" });
   } finally {

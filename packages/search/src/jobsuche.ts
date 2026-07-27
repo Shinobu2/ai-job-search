@@ -12,6 +12,7 @@ import {
   locationActionability,
   mapBounded,
   parseJson,
+  prioritizeByLocation,
   ReadFailure,
   roundRobinScopes,
 } from "./scheduler";
@@ -197,18 +198,6 @@ function detailRecord(value: unknown): JobsucheDetail {
   return detail as JobsucheDetail;
 }
 
-function sortResults(rows: DiscoveredJob[]): DiscoveredJob[] {
-  const tiers = { S: 0, A: 1, B: 2, C: 3 } as const;
-  return [...rows].sort((left, right) => {
-    const leftTier = left.evaluation ? tiers[left.evaluation.tier] : 4;
-    const rightTier = right.evaluation ? tiers[right.evaluation.tier] : 4;
-    return leftTier - rightTier
-      || (right.evaluation?.fit ?? -1) - (left.evaluation?.fit ?? -1)
-      || left.title.localeCompare(right.title)
-      || left.sourceId.localeCompare(right.sourceId);
-  });
-}
-
 function normalizedScope(source: JobsucheSourceConfig): unknown {
   const normalized = (values: string[]) => values.map((value) => value.trim().toLowerCase());
   return { keywords: normalized(source.keywords), cities: normalized(source.cities), country: source.country, maxPages: source.max_pages, pageSize: source.page_size };
@@ -288,7 +277,12 @@ export async function discoverJobsuche(
     }
     }
 
-  const summaries = [...seen.entries()].slice(0, MAX_DISCOVERY_RESULTS);
+  const detailLimit = Math.max(0, Math.min(options.maxResults ?? MAX_DISCOVERY_RESULTS, MAX_DISCOVERY_RESULTS));
+  const summaries = prioritizeByLocation(
+    [...seen.entries()],
+    ([, summary]) => locationText(undefined, summary.arbeitsort ?? realLocations(summary.stellenlokationen)?.[0]),
+    source.cities,
+  ).slice(0, detailLimit);
   counters.detailed = summaries.length;
   const details = await mapBounded(summaries, CONCURRENCY, async ([refnr]) => detailRecord(await readJson<unknown>(detailUrl(refnr), options, "Jobsuche")));
   for (let index = 0; index < details.length; index += 1) {
@@ -355,7 +349,7 @@ export async function discoverJobsuche(
 
     const status = discoveryStatus(counters);
     const scope = { planned: scopes.length, completed: completedScopes.size, failed: failedScopes.size };
-    batch = { sourceId: source.id, status, scope, jobs: sortResults(rows), counters, diagnostics };
+    batch = { sourceId: source.id, status, scope, jobs: rows, counters, diagnostics };
   } catch (error) {
     counters.failed += 1;
     diagnostics.push({ stage: "parse", locator: source.id, code: "connector_exception", message: error instanceof Error ? error.message : String(error), transient: false });

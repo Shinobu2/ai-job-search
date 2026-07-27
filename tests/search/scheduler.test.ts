@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { fetchWithRetry, mapBounded, roundRobinScopes } from "../../packages/search/src/scheduler";
+import { fetchWithRetry, mapBounded, prioritizeByLocation, roundRobinScopes } from "../../packages/search/src/scheduler";
 
 test("roundRobinScopes returns the stable keyword-by-city cross product", () => {
   expect(roundRobinScopes(["network", "data center"], ["Frankfurt", "Eschborn"])).toEqual([
@@ -9,6 +9,19 @@ test("roundRobinScopes returns the stable keyword-by-city cross product", () => 
     { keyword: "data center", city: "Eschborn" },
   ]);
   expect(roundRobinScopes([], ["Frankfurt"])).toEqual([]);
+});
+
+test("location prioritization keeps local roles ahead of unknown and out-of-area roles", () => {
+  const rows = [
+    { id: "outside", location: "Munich" },
+    { id: "unknown", location: null },
+    { id: "local", location: "Frankfurt am Main" },
+  ];
+  expect(prioritizeByLocation(rows, (row) => row.location, ["Frankfurt"])).toEqual([
+    rows[2],
+    rows[1],
+    rows[0],
+  ]);
 });
 
 test("mapBounded preserves input order, caps concurrency at five, and settles sibling failures", async () => {

@@ -49,6 +49,8 @@ export type DiscoveryBatch = {
 export type DiscoveryOptions = {
   asOf?: string;
   evaluate?: boolean;
+  /** Maximum exact adverts to fetch and inspect in this wave. */
+  maxResults?: number;
   sleep?: (delayMs: number) => Promise<void>;
   now?: () => string;
 };

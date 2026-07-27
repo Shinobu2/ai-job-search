@@ -77,7 +77,7 @@ test("search freehire prints imported jobs for model review without submission",
     expect(await new Response(child.stderr).text()).toBe("");
     const stdout = await new Response(child.stdout).text();
     expect(stdout).toContain("FreeHire discovered: 3 | raw results for model review: 3");
-    expect(stdout).toContain("Counters: searched=28 detailed=4 imported=3 skipped=1 failed=1");
+    expect(stdout).toContain("Counters: searched=78 detailed=4 imported=3 skipped=1 failed=1");
     expect(stdout).toContain("[detail] http_503 fixture-failed");
     expect(stdout).toContain("Data Center Technician — Fixture DC");
     expect(stdout).toContain("Warehouse Operative");
@@ -126,11 +126,9 @@ test("search freehire caps model-review output and diagnostic noise", async () =
     expect(await child.exited).toBe(0);
     expect(await new Response(child.stderr).text()).toBe("");
     const stdout = await new Response(child.stdout).text();
-    expect(stdout).toContain("FreeHire discovered: 13 | raw results for model review: 12");
+    expect(stdout).toContain("FreeHire discovered: 12 | raw results for model review: 12");
     expect(stdout.match(/Source: FreeHire/g)).toHaveLength(12);
-    expect(stdout).toContain("FreeHire diagnostics: 4 (showing 3)");
-    expect(stdout.match(/\[detail\] http_503/g)).toHaveLength(3);
-    expect(stdout).toContain("1 more diagnostic omitted.");
+    expect(stdout).not.toContain("fixture-failed");
   } finally {
     server.stop(true);
     await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
@@ -182,6 +180,7 @@ test("search employers prints imported jobs for model review", async () => {
       <position><id>c</id><name>Data Center Technician</name><office>Frankfurt</office><jobDescriptions><jobDescription><value>Hardware support</value></jobDescription></jobDescriptions></position>
       <position><id>x</id><name>Warehouse Operative</name><office>Frankfurt</office></position>
       <position><id>blocked</id><name>Data Center Technician 24/7</name><office>Frankfurt</office></position>
+      <position><id>outside</id><name>Munich Technician</name><office>Munich</office></position>
     </workzag-jobs>`, { status: 200 }),
   });
   try {
@@ -196,8 +195,9 @@ test("search employers prints imported jobs for model review", async () => {
     expect(stdout).toContain("Employer results for model review: 3");
     expect(stdout).toContain("Data Center Technician — maincubes");
     expect(stdout).toContain("Warehouse Operative — maincubes");
+    expect(stdout).not.toContain("Munich Technician — maincubes");
     const db = openDatabase(join(directory, "workspace", "control-room.sqlite"));
-    try { expect(db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 3 }); }
+    try { expect(db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 4 }); }
     finally { db.close(); }
   } finally {
     server.stop(true);
