@@ -17,6 +17,7 @@ export type AtsDocumentModel = {
   company: string;
   evidence: string[];
   verify: string[];
+  workAuthorization: string | null;
   availability: string | null;
   summary?: string | null;
   professionalExperience?: string[];
@@ -66,9 +67,9 @@ export async function buildAtsDocx(model: AtsDocumentModel): Promise<Uint8Array>
     }),
     heading(labels.contacts, HeadingLevel.HEADING_1),
     body(contacts.join(" | ")),
-    heading(labels.target, HeadingLevel.HEADING_1),
-    body(`${model.title} — ${model.company}`),
   ];
+  if (model.workAuthorization) children.push(body(model.workAuthorization));
+  children.push(heading(labels.target, HeadingLevel.HEADING_1), body(`${model.title} — ${model.company}`));
   if (model.summary) children.push(heading(labels.summary, HeadingLevel.HEADING_1), body(model.summary));
   if (model.professionalExperience?.length) children.push(heading(labels.experience, HeadingLevel.HEADING_1), ...bullets(model.professionalExperience));
   if (model.skills?.length) children.push(heading(labels.skills, HeadingLevel.HEADING_1), ...bullets(model.skills));

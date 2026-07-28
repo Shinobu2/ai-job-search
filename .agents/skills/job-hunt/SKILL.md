@@ -23,19 +23,21 @@ Keep this personal. Reuse the repository's search, persistence, document compila
 1. Choose one workflow mode. `hunter` is a broad local wave across existing sources and adjacent titles. `sniper` targets a short list of named employers or exact roles. Both reuse the same commands, tracker and review loop.
 2. Read [references/search-germany.md](references/search-germany.md) when starting a search or when the user asks for more. Run existing commands once, preferably in parallel: `bun run search:freehire`, `bun run search:ba`, `bun run search:employers`.
 3. Search Frankfurt/Rhine-Main first with an 80 km discovery radius. Treat radius as discovery only; judge the real route, shift time and public-transport feasibility separately.
-4. Cover direct roles, adjacent technical roles and paid short-onboarding/`Quereinstieg` roles. Prefer English working language. Use at most four focused web queries and inspect at most twelve exact postings per wave.
+4. Run two independent tracks. `datacenter` covers data-centre hardware, NOC/monitoring, IT operations, remote hands, incident/access coordination and English-friendly support. `bridge` covers light/moderate electronics or machine operation, quality inspection, IT rollout/break-fix, Warehouse IT/scanners, English service desk and paid `Quereinstieg`. Never let bridge roles displace the primary shortlist.
 5. Let code handle retrieval, liveness, persistence, explicit filters and dedupe by canonical URL, provider job ID, normalized company/title/location and content fingerprint. Do not build or report a deterministic semantic score.
-6. Prefer a live employer/ATS advert, then an authorised recruiter advert. Use boards only for discovery. Recheck the exact advert immediately before recommending or applying.
+6. Prefer a live employer/ATS advert, then an authorised recruiter advert. Use boards only for discovery. Recheck the exact advert immediately before recommending or applying. `search:employers` also prints a trusted official manual watchlist; inspect at most four of those exact official pages per wave.
 7. Apply hard gates before model comparison: commute, start/work eligibility, mandatory licence/certificate/degree, contract, explicit language and work style. Mark unknowns `уточнить`; never average away a failed gate.
-8. For this candidate, reject continuous lifting, prolonged standing, conveyor/warehouse work, routine rack installation/decommissioning and constant field travel. Occasional server swaps, short walks and light carrying are acceptable. Treat multi-day travel as a separate risk.
+8. On `datacenter`, reject continuous lifting, prolonged standing, conveyor work, routine rack installation/decommissioning and constant field travel. On `bridge`, report physical load and block continuous heavy work plus prolonged standing, conveyor work, continuous box loading and cold meat/poultry production; light/moderate work and Warehouse IT context remain reviewable.
 9. Prefer computer-heavy work: NOC/monitoring, IT operations, international internal/desktop support, data-centre repair/remote hands, access/incident coordination and asset/ticket operations. German user support requiring B1-C1 is a stretch, not a top match.
-10. Compare surviving full descriptions together once using model judgment: `Apply | Maybe | Skip`. Put the best three first and at most two genuine reserves below. Stop instead of padding.
+10. Reject pay-to-apply, paid visa placement, Telegram/WhatsApp-only recruiters, unverifiable companies and copied adverts without a canonical employer/recruiter source. Do not scrape bot-protected LinkedIn/Indeed/StepStone; use them only for supervised discovery.
+11. Compare surviving full descriptions together once using model judgment: `Apply | Maybe | Skip`. Put the best three first and at most two genuine reserves below. Stop instead of padding. Treat €1,850 net/month as emergency-only when no better credible option exists; prioritize the verified €2,500 target and stronger offers.
 
 ## Return a mobile shortlist
 
-Start with a two-sentence verdict. Keep numbering stable until a new wave replaces it. Each of the three main cards contains:
+Start with a two-sentence verdict. Use separate `Data centre / IT operations` and `Bridge roles (first 1–2 months)` sections; numbering stays stable inside each section until a new wave replaces it. Each main card contains:
 
 - role, company, location, posted/updated date, checked date and exact clickable advert;
+- `Старт: 17.08.2026 · §24 permit (no sponsorship)`;
 - advertised pay and basis, or a labelled estimate;
 - contract, language, shifts/on-call, travel and training;
 - physical load: `низкая`, `умеренная` or `высокая`, with advert evidence; use `уточнить` when the advert is silent;
@@ -48,7 +50,7 @@ List up to two reserves in one line. End with coverage and phone commands: `по
 
 1. Re-open the canonical advert and read [references/cv-cover-letter-2026.md](references/cv-cover-letter-2026.md).
 2. Scan the whole form before editing. Build one compact matrix: `field -> proposed value -> source/evidence -> known | ask | user decision -> sensitive -> last-confirmed date`. Batch all `ask` fields. Leave consent, declarations, work-authorisation wording, role-specific salary, EEO answers and relocation commitments for explicit review.
-3. Tailor only proven evidence through the existing document packet. Produce a single-column ATS-safe DOCX first. Generate a letter only when accepted or requested; reuse the upstream LaTeX templates when a human-readable PDF is useful.
+3. Tailor only proven evidence through the existing document packet. Keep home-lab and theory claims labelled. Produce a single-column ATS-safe DOCX first. Use `config/work-authorization-wording.json` verbatim in the CV header, cover letter and supported form comments; never claim the planned §24 permit is already issued. Generate a letter only when accepted or requested; reuse the upstream LaTeX templates when a human-readable PDF is useful.
 4. Run the DOCX factual QA and ATS lint. Compile LaTeX only for an optional PDF (CV maximum two pages, letter one page). Verify extracted text order, contacts, dates and every substantive claim.
 5. Use one browser tab per application and the signed-in exact role page. Prefer Chrome/Computer Use when an existing login or file upload is required. Upload once, batch-fill known fields and review once; if the active surface cannot upload, leave one exact manual attachment tap. Never generate, store or fill a password.
 6. Make at most two evidence-based attempts on a custom dropdown/upload. Then keep the live tab at that field and state the exact manual tap.

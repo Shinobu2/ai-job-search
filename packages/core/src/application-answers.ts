@@ -110,6 +110,13 @@ function hasConfirmedPlannedAuthorization(profile: Record<string, unknown>): boo
     && authorization.available_from === "2026-08-17";
 }
 
+export function workAuthorizationTextFromProfile(
+  profile: Record<string, unknown>,
+  locale: AvailabilityLocale,
+): string | null {
+  return hasConfirmedPlannedAuthorization(profile) ? workAuthorizationWording[locale] : null;
+}
+
 function prepareWorkAuthorizationAnswer(
   row: ApplicationAnswer,
   profile: Record<string, unknown>,

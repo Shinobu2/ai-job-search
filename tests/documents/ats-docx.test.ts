@@ -11,6 +11,7 @@ const model: AtsDocumentModel = {
   company: "Example DC",
   evidence: ["Personal hardware troubleshooting experience."],
   verify: ["INTERNAL: work authorisation must be confirmed"],
+  workAuthorization: null,
   availability: "Available immediately.",
 };
 
@@ -38,4 +39,16 @@ test("ATS QA detects symbol/icon XML and contacts in footers", async () => {
   expect(qa.checks).toContainEqual(expect.objectContaining({ id: "forbidden_glyphs", status: "fail" }));
   expect(qa.checks).toContainEqual(expect.objectContaining({ id: "forbidden_layout", status: "fail" }));
   expect(qa.checks).toContainEqual(expect.objectContaining({ id: "header_footer_contacts", status: "fail" }));
+});
+
+test("ATS DOCX places exact planned §24 wording in the body header once", async () => {
+  const workAuthorization =
+    "I am relocating to Frankfurt am Main on 7 August 2026 and will hold a residence permit under §24 AufenthG (temporary protection), which includes full access to the German labour market — no employer sponsorship is required. I am available to start from 17 August 2026.";
+  const bytes = await buildAtsDocx({ ...model, workAuthorization, availability: null });
+  const zip = await JSZip.loadAsync(bytes);
+  const xml = await zip.file("word/document.xml")!.async("string");
+
+  expect(xml.match(/I am relocating to Frankfurt am Main/g)).toHaveLength(1);
+  expect(xml).toContain(workAuthorization);
+  expect(xml.indexOf(workAuthorization)).toBeLessThan(xml.indexOf("Target role"));
 });

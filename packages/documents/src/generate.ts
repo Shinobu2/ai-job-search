@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { workAuthorizationTextFromProfile } from "../../core/src/application-answers";
 import { availabilityTextFromProfile } from "../../core/src/availability";
 import type { AtsDocumentModel } from "./ats-docx";
 
@@ -52,16 +53,18 @@ export function generateDocumentPacket(input: { title: string; company: string; 
     && record.kind !== "planned_project" && record.kind !== "informal_assistance");
   const verify = input.evaluation.gates.filter((gate) => gate.status === "VERIFY").map((gate) => gate.reason);
   if (evidence.length === 0) missing.push("evidence.mapped_role_evidence");
-  if (input.evaluation.verdict === "BLOCKED" || input.evaluation.tier === "C") missing.push("evaluation.non_blocked_match");
+  if (input.evaluation.verdict === "BLOCKED") missing.push("evaluation.non_blocked_match");
   if (input.evaluation.gates.some((gate) => gate.status === "VERIFY" && gate.critical)) missing.push("evaluation.critical_conditions_verified");
   const evidenceEn = evidence.length ? evidence.map((record) => `- ${record.statement} [${record.id}]`).join("\n") : "- No verified role-specific evidence mapped yet.";
   const evidenceDe = evidence.length ? evidence.map((record) => `- ${record.statement} [${record.id}]`).join("\n") : "- Noch keine verifizierten rollenspezifischen Nachweise zugeordnet.";
-  const englishCv = `# CV draft — ${input.title}\n\nTarget company: ${input.company}\n\n## Evidence-backed capabilities\n${evidenceEn}`;
-  const germanCv = `# Lebenslauf-Entwurf — ${input.title}\n\nZielunternehmen: ${input.company}\n\n## Nachweisbare Kompetenzen\n${evidenceDe}`;
+  const workAuthorizationEn = workAuthorizationTextFromProfile(input.workspace.profile, "en");
+  const workAuthorizationDe = workAuthorizationTextFromProfile(input.workspace.profile, "de");
+  const englishCv = `# CV draft — ${input.title}\n\nTarget company: ${input.company}${workAuthorizationEn ? `\n\n${workAuthorizationEn}` : ""}\n\n## Evidence-backed capabilities\n${evidenceEn}`;
+  const germanCv = `# Lebenslauf-Entwurf — ${input.title}\n\nZielunternehmen: ${input.company}${workAuthorizationDe ? `\n\n${workAuthorizationDe}` : ""}\n\n## Nachweisbare Kompetenzen\n${evidenceDe}`;
   const availabilityTextEn = input.asOfDate ? availabilityTextFromProfile(input.workspace.profile, input.asOfDate, "en") : null;
   const availabilityTextDe = input.asOfDate ? availabilityTextFromProfile(input.workspace.profile, input.asOfDate, "de") : null;
-  const englishCoverLetter = input.workingLanguage === "de" ? "" : `# Cover letter draft\nI am interested in the ${input.title} position at ${input.company}. My relevant claims are limited to the evidence listed above.${availabilityTextEn ? `\n${availabilityTextEn}` : ""}`;
-  const germanCoverLetter = input.workingLanguage === "en" ? "" : `# Anschreiben-Entwurf\nIch interessiere mich für die Position ${input.title} bei ${input.company}. Meine relevanten Angaben beschränken sich auf die oben aufgeführten Nachweise.${availabilityTextDe ? `\n${availabilityTextDe}` : ""}`;
+  const englishCoverLetter = input.workingLanguage === "de" ? "" : `# Cover letter draft\nI am interested in the ${input.title} position at ${input.company}. My relevant claims are limited to the evidence listed above.${workAuthorizationEn ? `\n${workAuthorizationEn}` : availabilityTextEn ? `\n${availabilityTextEn}` : ""}`;
+  const germanCoverLetter = input.workingLanguage === "en" ? "" : `# Anschreiben-Entwurf\nIch interessiere mich für die Position ${input.title} bei ${input.company}. Meine relevanten Angaben beschränken sich auf die oben aufgeführten Nachweise.${workAuthorizationDe ? `\n${workAuthorizationDe}` : availabilityTextDe ? `\n${availabilityTextDe}` : ""}`;
   const workingLanguage = input.workingLanguage ?? "en";
   const atsDocument: AtsDocumentModel = {
     language: workingLanguage,
@@ -72,7 +75,10 @@ export function generateDocumentPacket(input: { title: string; company: string; 
     company: input.company,
     evidence: evidence.map((record) => record.statement),
     verify,
-    availability: workingLanguage === "de" ? availabilityTextDe : availabilityTextEn,
+    workAuthorization: workingLanguage === "de" ? workAuthorizationDe : workAuthorizationEn,
+    availability: (workingLanguage === "de" ? workAuthorizationDe : workAuthorizationEn)
+      ? null
+      : workingLanguage === "de" ? availabilityTextDe : availabilityTextEn,
   };
   return {
     ready_for_submission: missing.length === 0,

@@ -14,8 +14,8 @@ Use `hunter` for the three-wave sweep above. Use `sniper` when the user names an
 
 ## Coverage ladder
 
-1. Run the repository's FreeHire, Bundesagentur Jobsuche, and registered Personio-employer searches.
-2. Search direct career pages of relevant employers and service providers. Prefer the employer's canonical advert for truth and application.
+1. Run the repository's FreeHire, Bundesagentur Jobsuche, and registered Personio/Greenhouse/Lever employer searches.
+2. Rotate through up to four entries from the official manual watchlist printed by `bun run search:employers`. It includes direct data-centre employers and established recruiter pages; prefer the canonical employer advert when one exists.
 3. Search `Make it in Germany` and EURES for official cross-border coverage. BA-backed listings can duplicate Jobsuche; deduplicate them.
 4. Use LinkedIn Jobs, StepStone, Indeed, XING Jobs, Jobware, stellenanzeigen.de, and Google/Bing job results for discovery. Verify availability and requirements on the employer page before recommending or applying.
 5. For sparse results, search ATS domains directly: `site:jobs.personio.de`, `site:boards.greenhouse.io`, `site:jobs.lever.co`, and employer-specific career domains with the role and location.
@@ -37,5 +37,6 @@ Do not add a new connector merely to cover another site. Web search and direct-p
 - [Bundesagentur Jobsuche](https://www.arbeitsagentur.de/jobsuche/) exposes filters including radius, employment type, freshness, shift/weekend work, pay, and `Quereinstieg möglich`.
 - [Make it in Germany job listings](https://www.make-it-in-germany.com/en/working-in-germany/job-listings) is the German government's portal for international applicants and republishes a selected BA pool.
 - [EURES](https://eures.europa.eu/jobseekers_en) adds official EU/EEA mobility coverage.
+- Official recruiter coverage in the registry includes [Amadeus Fire](https://www.amadeus-fire.de/jobsuche), [DIS AG](https://jobs.de.dis-ag.com/), [Experis](https://www.experis.de/de/search/region/frankfurt), [FERCHAU Frankfurt](https://www.ferchau.com/de/de/ueber-uns/niederlassungen/frankfurt/frankfurt-direct-457), [Randstad](https://www.randstad.de/jobs/hessen/frankfurt-am-main/), [Adecco](https://jobs.de.adecco.com/), [Manpower](https://www.manpower.de/de/search/region/frankfurt), and [DEKRA Arbeit](https://www.dekra-arbeit.de/stellenmarkt). Reading/applying is free; reject third parties asking the candidate for placement, visa or training fees.
 
 Re-check live filters and site availability when searching; source behavior changes.

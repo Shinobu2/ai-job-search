@@ -44,6 +44,27 @@ test("never marks blocked or critical-unknown document packets submission-ready"
   expect(packet.missing).toContain("evaluation.critical_conditions_verified");
 });
 
+test("does not block a truthful document packet only because a deterministic tier is C", () => {
+  const packet = generateDocumentPacket({
+    title: "Technician",
+    company: "Example",
+    evaluation: { verdict: "PROCEED", tier: "C", mappings: [{ status: "partial", evidenceIds: ["CONFIRMED"] }], gates: [] },
+    workspace: {
+      profile: { identity: verifiedIdentity },
+      evidence: { records: [{
+        id: "CONFIRMED",
+        kind: "hands_on",
+        statement: "Personal hardware experience.",
+        reviewer_status: "user_confirmed",
+        provenance: [{ source_type: "user_statement", source_ref: "test" }],
+      }] },
+    },
+  });
+
+  expect(packet.ready_for_submission).toBe(true);
+  expect(packet.missing).not.toContain("evaluation.non_blocked_match");
+});
+
 test("requires verified identity values with provenance before submission", () => {
   const identity = {
     ...verifiedIdentity,
@@ -64,6 +85,23 @@ const profileWithAvailability = {
     available_from: { value: "2026-08-17", verification_status: "user_confirmed", provenance: [{ source_type: "user_statement", source_ref: "test" }] },
   },
   locations: { city: { value: { name: "Frankfurt" }, verification_status: "user_confirmed", provenance: [{ source_type: "user_statement", source_ref: "test" }] } },
+};
+
+const profileWithPlannedAuthorization = {
+  ...profileWithAvailability,
+  legal: {
+    work_authorization: {
+      value: {
+        status: "planned_after_arrival",
+        basis: "§24 AufenthG (temporary protection)",
+        employment_access: "full_once_issued",
+        sponsorship_required: false,
+        available_from: "2026-08-17",
+      },
+      verification_status: "user_confirmed",
+      provenance: [{ source_type: "user_statement", source_ref: "test" }],
+    },
+  },
 };
 
 test("injects adaptive availability into cover-letter drafts when asOfDate and verified dates are present", () => {
@@ -91,4 +129,33 @@ test("omits adaptive availability when asOfDate is absent, preserving prior beha
   expect(packet.availabilityTextEn).toBeNull();
   expect(packet.availabilityTextDe).toBeNull();
   expect(packet.englishCoverLetter).not.toContain("available from");
+});
+
+test("uses exact planned §24 wording and includes its availability only once per document", () => {
+  const packet = generateDocumentPacket({
+    title: "Technician",
+    company: "Example",
+    evaluation: { verdict: "PROCEED", tier: "A", mappings: [{ status: "proven", evidenceIds: ["CONFIRMED"] }], gates: [] },
+    workspace: {
+      profile: profileWithPlannedAuthorization,
+      evidence: { records: [{
+        id: "CONFIRMED",
+        kind: "hands_on",
+        statement: "Personal hardware experience.",
+        reviewer_status: "user_confirmed",
+        provenance: [{ source_type: "user_statement", source_ref: "test" }],
+      }] },
+    },
+    asOfDate: "2026-07-28",
+  });
+  const exactEn = "I am relocating to Frankfurt am Main on 7 August 2026 and will hold a residence permit under §24 AufenthG (temporary protection), which includes full access to the German labour market — no employer sponsorship is required. I am available to start from 17 August 2026.";
+  const exactDe = "Ich ziehe am 7. August 2026 nach Frankfurt am Main und erhalte eine Aufenthaltserlaubnis nach §24 AufenthG, die eine uneingeschränkte Erwerbstätigkeit erlaubt — ein Sponsoring durch den Arbeitgeber ist nicht erforderlich. Ich kann ab dem 17. August 2026 beginnen.";
+
+  expect(packet.englishCv.match(/I am relocating to Frankfurt am Main/g)).toHaveLength(1);
+  expect(packet.germanCv.match(/Ich ziehe am 7\. August 2026/g)).toHaveLength(1);
+  expect(packet.englishCoverLetter.match(/17 August 2026/g)).toHaveLength(1);
+  expect(packet.germanCoverLetter.match(/17\. August 2026/g)).toHaveLength(1);
+  expect(packet.englishCv).toContain(exactEn);
+  expect(packet.germanCv).toContain(exactDe);
+  expect(packet.atsDocument).toMatchObject({ workAuthorization: exactEn, availability: null });
 });

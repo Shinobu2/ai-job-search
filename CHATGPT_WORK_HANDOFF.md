@@ -13,6 +13,27 @@ answers.
 - Do not reconstruct application state from old chats. Ask the user for the
   latest private tracker export or the compact status list below.
 
+## Workflow update (2026-07-28)
+
+- Search now runs independent `datacenter` and `bridge` tracks through
+  `bun run search:freehire`, `bun run search:ba` and
+  `bun run search:employers`. Keep their shortlists separate.
+- The employer search reads approved public Personio, Greenhouse and Lever
+  endpoints and prints a trusted official manual watchlist for direct
+  employers and established agencies. Recheck the canonical advert before
+  recommending it; reject pay-to-apply and unverifiable recruiter sources.
+- Unclassified, tier-C and uncertain vacancies stay visible for model review
+  unless an explicit hard gate fails. Code does not decide `Apply | Maybe |
+  Skip` from a semantic score.
+- Work-authorisation text comes only from
+  `config/work-authorization-wording.json`: the permit is planned after
+  arrival, no employer sponsorship is required, and the stated start date must
+  travel with the wording. Never imply that the permit is already issued.
+- Bridge work must remain light/moderate. Continuous heavy work plus prolonged
+  standing, conveyor work, continuous box loading and cold meat/poultry
+  production are excluded. The configured salary floor is emergency-only;
+  prioritize stronger credible offers.
+
 ## Current application status (2026-07-25)
 
 Submitted / waiting:
