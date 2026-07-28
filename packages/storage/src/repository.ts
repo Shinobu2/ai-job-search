@@ -661,7 +661,7 @@ export class StorageRepository {
     }
     requireHash(mapping.evidenceSnapshotHash, "evidenceSnapshotHash");
     if (!isProvenance(mapping.provenance)) throw new Error("evidence mapping provenance is required");
-    if (mapping.mappingStatus !== undefined && !["proven", "partial", "transferable", "missing", "unknown", "contradicted"].includes(mapping.mappingStatus)) {
+    if (mapping.mappingStatus !== undefined && !["proven", "partial", "transferable", "missing", "unknown", "needs_model", "contradicted"].includes(mapping.mappingStatus)) {
       throw new Error("evidenceMapping.mappingStatus is invalid");
     }
     if (mapping.credit !== undefined && (!Number.isInteger(mapping.credit) || mapping.credit < 0 || mapping.credit > 100)) {

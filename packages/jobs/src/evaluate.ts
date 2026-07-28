@@ -84,6 +84,11 @@ function calmNightWorkContext(text: string): boolean {
   return /\bmonitoring\b|\btickets?\b|\bNOC\b|\binternal IT\b|\bIT operations?\b|\btechnical operations?\b/i.test(text);
 }
 
+function shiftAvailabilityConfirmed(profile: Profile): boolean {
+  const shift = profile.constraints?.night_shifts;
+  return verified(shift) && /available_including_night_rotating_weekend_holiday/i.test(shift.value);
+}
+
 function explicitlyNoHeavyWorkRequired(text: string): boolean {
   return /\bno (?:continuous )?heavy (?:work|labou?r|lifting)(?: is)? required\b|\b(?:continuous )?heavy (?:work|labou?r|lifting) (?:is )?not required\b/i.test(text);
 }
@@ -115,6 +120,23 @@ function mandatoryDisqualifyingPhysical(text: string): { hit: boolean; reason: s
     return { hit: true, reason: "Constant field travel conflicts with the verified physical constraint" };
   }
   return { hit: false, reason: "" };
+}
+
+function prolongedStandingRequired(text: string): boolean {
+  return /\bprolonged standing\b|\bdauerhaft(?:e|en)?\s+stehende?\s+[-\s]?tätigkeit\b|\bdurchgehend\s+stehen\b/i.test(text);
+}
+
+function repeatedOrContinuousHeavyWorkRequired(text: string): boolean {
+  return mandatoryHeavyWorkRequired(text)
+    || /\brepeated heavy lifting\b|\bwiederholtes\s+schweres\s+heben\b/i.test(text);
+}
+
+function excludedBridgeEnvironment(text: string): boolean {
+  return /\b(?:cold|refrigerated)\s+(?:meat|poultry|chicken)\s+(?:plant|processing|production)\b|\bschlachthof\b|\bgeflügelverarbeitung\b|\bcontinuous\s+(?:manual\s+)?box\s+(?:loading|handling)\b/i.test(text);
+}
+
+function lightOrModeratePhysicalWork(text: string): boolean {
+  return /\b(?:light|moderate|light to moderate)\s+(?:physical\s+)?(?:work|activity|lifting|carrying)\b|\boccasional(?:ly)?\s+(?:lifting|carrying)\b|\bleichte?\s+bis\s+mittlere?\s+körperliche\s+arbeit\b/i.test(text);
 }
 
 function explicitlyNoGermanRequirement(text: string): boolean {
@@ -154,10 +176,37 @@ function mandatoryCefrGermanRequirement(text: string): "B1" | "B2" | "C1" | "C2"
  */
 function mandatoryQualitativeGermanRequirement(text: string): boolean {
   return textClauses(text).some((clause) => {
-    const qualitative = /(?:gute|sehr\s+gute|fließende|fließend|verhandlungssicher(?:e|en)?)\s+(?:deutsch|deutschkenntnisse|ken oversight in german)/i.test(clause);
+    const qualitative = /(?:gute|sehr\s+gute|fließende|fließend|verhandlungssicher(?:e|en)?)\s+(?:deutsch|deutschkenntnisse)/i.test(clause);
     const optional = /\b(?:optional|preferred|plus|nice to have|wünschens?wert|not required|nicht erforderlich)\b/i.test(clause);
     const negated = /\b(?:no|not|keine)\b.{0,30}(?:gute|sehr\s+gute|fließende|fließend|verhandlungssicher)/i.test(clause);
     return qualitative && !optional && !negated;
+  });
+}
+
+function fullyEnglishPosting(extracted: ExtractedJob): boolean {
+  const text = Object.values(extracted.fields)
+    .filter((item) => item.state === "known")
+    .map((item) => item.value ?? "")
+    .join(" ")
+    .toLowerCase();
+  if (/\bgerman\b|\bdeutsch(?:kenntnisse)?\b/.test(text)) return false;
+  const signals = [
+    "technician", "monitor", "server", "hardware", "respond", "incident",
+    "document", "ticket", "support", "operations", "team", "safety",
+    "experience", "candidate", "required", "responsibilities", "shift",
+    "network", "work", "entry-level", "welcome",
+  ];
+  return signals.filter((signal) => text.includes(signal)).length >= 6;
+}
+
+function mandatorySeniorExperienceRequired(text: string): boolean {
+  if (/senior-only|senior.*required|[3-9]\s+years.*(?:senior|professional)/i.test(text)) return true;
+  return textClauses(text).some((clause) => {
+    const optional = /\b(?:wünschenswert|von vorteil|optional|preferred|nice to have)\b/i.test(clause);
+    const years = /\b(?:mindestens|mind\.?)\s*[3-9]\s*jahre?\s+(?:einschlägige\s+)?berufserfahrung\b/i.test(clause);
+    const multiYear = /\b(?:mehrjährige|langjährige)\s+(?:einschlägige\s+)?berufserfahrung\b/i.test(clause)
+      && /\b(?:erforderlich|zwingend|vorausgesetzt|notwendig)\b/i.test(clause);
+    return !optional && (years || multiYear);
   });
 }
 
@@ -184,14 +233,34 @@ function hasAcceptedEnglishAlternative(languages: string | null, germanRequireme
     || /\benglish\s+(?:is\s+)?(?:accepted|allowed|sufficient|ok(?:ay)?)\s+(?:as\s+)?(?:an\s+)?alternative\b/i.test(text);
 }
 
+function germanNumber(value: string): number | null {
+  if (/^\d+$/.test(value)) return Number(value);
+  if (/^\d{1,3}(?:\.\d{3})+(?:,\d{2})?$/.test(value)) {
+    return Number(value.replace(/\./g, "").replace(",", "."));
+  }
+  if (/^\d+,\d{2}$/.test(value)) return Number(value.replace(",", "."));
+  return null;
+}
+
 function explicitNetMonthlyEur(salary: string | null): number | null {
-  const match = /€\s*([\d.,]+)\s*net\s+per\s+month\b/i.exec(salary ?? "");
+  const source = salary ?? "";
+  const match =
+    /(?:€|EUR)\s*([\d.,]+)\s*(?:net|netto)\s*(?:per|pro|\/)\s*(?:month|monat)\b/i.exec(source)
+    ?? /([\d.,]+)\s*(?:€|EUR)\s*(?:net|netto)\s*(?:per|pro|\/)\s*(?:month|monat)\b/i.exec(source);
   const value = match?.[1];
   if (!value) return null;
-  if (/^\d+$/.test(value)) return Number(value);
-  if (!/^(?:\d{1,3}(?:\.\d{3})+|\d+),\d{2}$/.test(value)) return null;
-  const amount = Number(value.replace(/\./g, "").replace(",", "."));
+  const amount = germanNumber(value);
   return Number.isFinite(amount) ? amount : null;
+}
+
+function advertisedSalaryFacts(salary: string | null): string[] {
+  if (!salary) return [];
+  const monetary = /(?:€|EUR)\s*[\d.,]+|[\d.,]+\s*(?:€|EUR)/i.test(salary);
+  if (!monetary) return [];
+  const assumption = /\b(?:gross|brutto)\b|\/(?:Jahr|Monat|Stunde)\b|per\s+(?:year|month|hour)\b/i.test(salary)
+    ? "salary.assumption:Net conversion requires tax, social-insurance, and working-time assumptions"
+    : "salary.assumption:Advertised salary basis or period is incomplete";
+  return [`posting.salary:${salary}`, assumption];
 }
 
 function gatesFor(archetype: EvaluationResult["archetype"], extracted: ExtractedJob, workspace: WorkspaceSnapshot, asOf: string): Gate[] {
@@ -208,11 +277,14 @@ function gatesFor(archetype: EvaluationResult["archetype"], extracted: Extracted
   const nightWorkRequired = shift ? mandatoryNightWorkRequired(shift) : false;
   const gates: Record<string, Gate> = {
     archetype: archetype === "X" ? gate("archetype", "BLOCKED", true, "Role is outside the supported archetypes", ["taxonomy"])
+      : archetype === "REVIEW" ? gate("archetype", "VERIFY", true, "No reliable taxonomy cue; model review required", ["taxonomy"])
       : gate("archetype", "PASS", true, `Classified as ${archetype}`, ["taxonomy"]),
     shift: !shift || placeholder(shift) ? gate("shift", "VERIFY", true, "Shift requirements are unknown")
       : nightWorkRequired && verified(profile.constraints?.night_shifts) && profile.constraints?.night_shifts.value === "blocked"
         ? gate("shift", "BLOCKED", true, "Posting requires night or rotating shifts", ["profile.constraints.night_shifts"])
         : nightWorkRequired && !verified(profile.constraints?.night_shifts) ? gate("shift", "VERIFY", true, "Night or rotating shifts conflict status is unknown")
+          : nightWorkRequired && shiftAvailabilityConfirmed(profile)
+            ? gate("shift", "PASS", true, "Candidate is available for 24/7, night, rotating, weekend, and holiday shifts", ["profile.constraints.night_shifts"])
           : nightWorkRequired && calmNightWorkContext(`${shift} ${skills ?? ""}`)
             ? gate("shift", "PASS_WITH_RISK", true, "Night work is mainly monitoring, tickets, NOC, or internal technical operations", ["profile.constraints.night_shifts"])
           : nightWorkRequired ? gate("shift", "VERIFY", true, "Night or rotating work is not clearly a calm technical operation")
@@ -235,7 +307,20 @@ function gatesFor(archetype: EvaluationResult["archetype"], extracted: Extracted
       const physicalText = `${physical ?? ""} ${skills ?? ""}`.trim();
       if (!physicalText || placeholder(physicalText)) return gate("physical", "VERIFY", true, "Physical requirements are unknown");
       const physicalConstraint = profile.constraints?.continuous_heavy_work;
-      const blocksPhysicalWork = verified(physicalConstraint) && /blocked|avoid_continuous_heavy_work/i.test(physicalConstraint.value);
+      const blocksPhysicalWork = verified(physicalConstraint)
+        && /blocked|avoid_continuous_heavy_work|light_or_moderate_physical_work_only/i.test(physicalConstraint.value);
+      if (archetype === "REVIEW") {
+        if (excludedBridgeEnvironment(physicalText) && blocksPhysicalWork) {
+          return gate("physical", "BLOCKED", true, "Work environment conflicts with the verified light/moderate-work constraint", ["profile.constraints.continuous_heavy_work"]);
+        }
+        if (repeatedOrContinuousHeavyWorkRequired(physicalText) && prolongedStandingRequired(physicalText) && blocksPhysicalWork) {
+          return gate("physical", "BLOCKED", true, "Continuous heavy work combined with prolonged standing conflicts with the verified constraint", ["profile.constraints.continuous_heavy_work"]);
+        }
+        if (lightOrModeratePhysicalWork(physicalText)) {
+          return gate("physical", "PASS_WITH_RISK", false, "Bridge role reports light or moderate physical work", ["profile.constraints.continuous_heavy_work"]);
+        }
+        return gate("physical", "VERIFY", true, "Bridge-role physical load needs model review", ["profile.constraints.continuous_heavy_work"]);
+      }
       if (mandatoryHeavyWorkRequired(physicalText) && blocksPhysicalWork) {
         return gate("physical", "BLOCKED", true, "Continuous heavy work conflicts with a verified constraint", ["profile.constraints.continuous_heavy_work"]);
       }
@@ -260,6 +345,7 @@ function gatesFor(archetype: EvaluationResult["archetype"], extracted: Extracted
         : gate("facilities", "PASS", false, "No unsupported electrical or HVAC requirement"),
     language: (() => {
       const languageText = `${languages ?? ""} ${skills ?? ""}`.trim();
+      if (fullyEnglishPosting(extracted)) return gate("language", "PASS", false, "Posting is fully English with no German requirement");
       if (!languageText || placeholder(languageText)) return gate("language", "VERIFY", true, "Language requirements are unknown");
       const germanRequirement = mandatoryCefrGermanRequirement(languageText);
       const englishAlternative = germanRequirement !== null && hasAcceptedEnglishAlternative(languageText, germanRequirement);
@@ -300,20 +386,31 @@ function gatesFor(archetype: EvaluationResult["archetype"], extracted: Extracted
       return gate("language", "VERIFY", true, `German ${requiredLevel} needs verification`);
     })(),
     experience: !experience || placeholder(experience) ? gate("experience", "VERIFY", true, "Experience requirements are unknown")
-      : includes(experience, /senior-only|senior.*required|[3-9]\s+years.*(senior|professional)/i)
+      : mandatorySeniorExperienceRequired(experience)
         ? gate("experience", "BLOCKED", true, "Senior-only experience is required", ["posting.experience"])
         : gate("experience", "PASS", false, "No senior-only experience requirement"),
     salary: (() => {
       const amount = explicitNetMonthlyEur(salary);
       const floor = profile.compensation?.net_monthly_estimate;
-      if (amount === null) return gate("salary", "VERIFY", false, "Salary is unknown or cannot be compared deterministically");
+      if (amount === null) {
+        const facts = advertisedSalaryFacts(salary);
+        return gate(
+          "salary",
+          "VERIFY",
+          false,
+          facts.length > 0
+            ? "Advertised salary requires labeled assumptions before net comparison"
+            : "Salary is unknown or cannot be compared deterministically",
+          facts,
+        );
+      }
       if (!verified(floor) || typeof floor.value.floor_eur !== "number") {
-        return gate("salary", "VERIFY", false, "Candidate salary floor needs verification");
+        return gate("salary", "VERIFY", false, "Candidate salary floor needs verification", [`posting.salary:${salary}`]);
       }
       if (amount < floor.value.floor_eur) {
-        return gate("salary", "BLOCKED", true, "Explicit net salary is below the verified floor", ["profile.compensation.net_monthly_estimate"]);
+        return gate("salary", "BLOCKED", true, "Explicit net salary is below the verified floor", ["profile.compensation.net_monthly_estimate", `posting.salary:${salary}`]);
       }
-      return gate("salary", "PASS", false, "Explicit net salary meets the verified floor");
+      return gate("salary", "PASS", false, "Explicit net salary meets the verified floor", ["profile.compensation.net_monthly_estimate", `posting.salary:${salary}`]);
     })(),
     deadline: reliableIsoDate(deadline) && deadline < asOf
       ? gate("deadline", "BLOCKED", true, "Reliable application deadline has expired", ["posting.deadline"])
@@ -322,32 +419,81 @@ function gatesFor(archetype: EvaluationResult["archetype"], extracted: Extracted
   return evaluationRules.gate_order.map((id) => gates[id]);
 }
 
+const mappingStopWords = new Set([
+  "a", "an", "and", "as", "at", "by", "candidate", "der", "die", "das", "ein", "eine",
+  "experience", "for", "from", "in", "mit", "of", "or", "personal", "performed", "reported",
+  "reports", "the", "to", "und", "von", "with",
+]);
+
+function contentTokens(text: string): Set<string> {
+  return new Set(
+    text.toLowerCase()
+      .replace(/home[-\s]+lab/g, "homelab")
+      .match(/[\p{L}\p{N}+#]+/gu)
+      ?.filter((token) => token.length > 1 && !mappingStopWords.has(token))
+      ?? [],
+  );
+}
+
+function requirementOverlap(requirementText: string, evidenceText: string): number {
+  const required = contentTokens(requirementText);
+  if (required.size === 0) return 0;
+  const available = contentTokens(evidenceText);
+  let matches = 0;
+  for (const token of required) if (available.has(token)) matches += 1;
+  return matches / required.size;
+}
+
 function mappingFor(requirement: ExtractedJob["requirements"][number], evidence: Evidence[]): EvidenceMapping {
   const text = requirement.text.toLowerCase();
   const id = `mapping_${requirement.id}`;
-  const unknownClaim = /home[-\s]+lab|planned|theory/.test(text);
-  const discord = evidence.find((record) => record.kind === "informal_assistance");
-  const eligibleEvidence = evidence.filter((record) => record.kind !== "planned_project" && !/home[-\s]+lab|planned|theory/i.test(record.statement));
-  const verifiedExact = eligibleEvidence.find((record) => record.kind !== "informal_assistance"
+  const result = (
+    status: EvidenceMapping["status"],
+    evidenceIds: string[] = [],
+  ): EvidenceMapping => ({
+    id,
+    requirementId: requirement.id,
+    status,
+    evidenceIds,
+    credit: evaluationRules.mapping_credits[status],
+  });
+  const education = /education|ausbildung|degree/.test(text);
+  if (education) return result("missing");
+
+  const scored = evidence
+    .map((record) => ({ record, overlap: requirementOverlap(text, record.statement) }))
+    .sort((left, right) => right.overlap - left.overlap || left.record.id.localeCompare(right.record.id));
+  const restricted = (record: Evidence) =>
+    ["home_lab", "theory", "planned_project"].includes(record.kind)
+    || /home[-\s]+lab|planned|theory/i.test(record.statement);
+  const ordinary = scored.filter(({ record }) => record.kind !== "informal_assistance" && !restricted(record));
+  const verifiedMatch = ordinary.find(({ record, overlap }) =>
+    overlap >= 0.5
+    && ["hands_on", "employment", "hardware", "networking"].includes(record.kind)
     && ["user_confirmed", "document_verified"].includes(record.reviewer_status)
-    && hasValidProvenance(record)
-    && record.statement.toLowerCase().includes(text));
-  if (verifiedExact) {
-    return { id, requirementId: requirement.id, status: "proven", evidenceIds: [verifiedExact.id], credit: evaluationRules.mapping_credits.proven };
-  }
-  if (/support|help.?desk|ticket/.test(text) && discord) return { id, requirementId: requirement.id, status: "contradicted", evidenceIds: [], credit: evaluationRules.mapping_credits.contradicted };
-  if (unknownClaim) return { id, requirementId: requirement.id, status: "unknown", evidenceIds: [], credit: evaluationRules.mapping_credits.unknown };
-  if (/education|ausbildung|degree/.test(text)) return { id, requirementId: requirement.id, status: "missing", evidenceIds: [], credit: evaluationRules.mapping_credits.missing };
-  const disqualified = evidence.find((record) => (record.kind === "planned_project" || /home[-\s]+lab|planned|theory/i.test(record.statement))
-    && (record.statement.toLowerCase().includes(text) || (record.kind === "hardware" && /hardware|server|cabl/.test(text))));
-  if (disqualified) return { id, requirementId: requirement.id, status: "unknown", evidenceIds: [], credit: evaluationRules.mapping_credits.unknown };
-  const exact = eligibleEvidence.find((record) => record.statement.toLowerCase().includes(text));
-  if (exact) {
-    return { id, requirementId: requirement.id, status: "partial", evidenceIds: [exact.id], credit: evaluationRules.mapping_credits.partial };
-  }
-  const transferable = eligibleEvidence.find((record) => record.kind === "hardware" && /hardware|server|cabl/.test(text));
-  if (transferable) return { id, requirementId: requirement.id, status: "transferable", evidenceIds: [transferable.id], credit: evaluationRules.mapping_credits.transferable };
-  return { id, requirementId: requirement.id, status: "missing", evidenceIds: [], credit: evaluationRules.mapping_credits.missing };
+    && hasValidProvenance(record));
+  if (verifiedMatch) return result("proven", [verifiedMatch.record.id]);
+
+  const provisionalMatch = ordinary.find(({ overlap }) => overlap >= 0.5);
+  if (provisionalMatch) return result("partial", [provisionalMatch.record.id]);
+
+  const discord = evidence.find((record) => record.kind === "informal_assistance");
+  if (/support|help.?desk|ticket/.test(text) && discord) return result("contradicted");
+
+  const restrictedMatch = scored.find(({ record, overlap }) =>
+    restricted(record)
+    && (overlap >= 0.5 || (/hardware|server|cabl/.test(text) && /hardware|server|cabl/i.test(record.statement))));
+  if (restrictedMatch) return result("needs_model", [restrictedMatch.record.id]);
+  if (/homelab|home[-\s]+lab|planned|theory/.test(text)) return result("needs_model");
+
+  const uncertain = scored.find(({ overlap }) => overlap > 0);
+  if (uncertain) return result("needs_model", [uncertain.record.id]);
+
+  const transferable = ordinary.find(({ record }) =>
+    ["hands_on", "hardware"].includes(record.kind)
+    && /hardware|server|cabl/.test(text));
+  if (transferable) return result("transferable", [transferable.record.id]);
+  return result("missing");
 }
 
 function survivalFor(gates: Gate[]): number | null {

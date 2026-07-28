@@ -56,7 +56,7 @@ export type Gate = {
   facts: string[];
 };
 
-export type EvidenceMappingStatus = "proven" | "partial" | "transferable" | "missing" | "unknown" | "contradicted";
+export type EvidenceMappingStatus = "proven" | "partial" | "transferable" | "missing" | "unknown" | "needs_model" | "contradicted";
 
 export type EvidenceMapping = {
   id: string;
@@ -68,7 +68,7 @@ export type EvidenceMapping = {
 
 export type EvaluationResult = {
   jobId: string;
-  archetype: "A" | "AT" | "BT" | "F" | "X";
+  archetype: "A" | "AT" | "BT" | "F" | "REVIEW" | "X";
   gates: Gate[];
   mappings: EvidenceMapping[];
   fit: number;

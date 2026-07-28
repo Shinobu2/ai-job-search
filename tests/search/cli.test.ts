@@ -25,10 +25,11 @@ function discoveryJob(overrides: Partial<DiscoveredJob> = {}): DiscoveredJob {
   };
 }
 
-test("actionable discovery requires geography, supported archetype, S/A/B tier, and no blocked gate or verdict", () => {
+test("actionable discovery hides only geographic or explicit hard blockers", () => {
   expect(isActionableDiscoveryJob(discoveryJob())).toBe(true);
   expect(isActionableDiscoveryJob(discoveryJob({ actionable: false }))).toBe(false);
-  expect(isActionableDiscoveryJob(discoveryJob({ evaluation: { ...discoveryJob().evaluation!, tier: "C" } }))).toBe(false);
+  expect(isActionableDiscoveryJob(discoveryJob({ evaluation: { ...discoveryJob().evaluation!, tier: "C" } }))).toBe(true);
+  expect(isActionableDiscoveryJob(discoveryJob({ evaluation: { ...discoveryJob().evaluation!, archetype: "REVIEW", tier: "C", verdict: "VERIFY" } }))).toBe(true);
   expect(isActionableDiscoveryJob(discoveryJob({ evaluation: { ...discoveryJob().evaluation!, archetype: "X" } }))).toBe(false);
   expect(isActionableDiscoveryJob(discoveryJob({ evaluation: { ...discoveryJob().evaluation!, verdict: "BLOCKED" } }))).toBe(false);
   expect(isActionableDiscoveryJob(discoveryJob({ evaluation: { ...discoveryJob().evaluation!, gates: [{ id: "shift", status: "BLOCKED", critical: true, reason: "blocked", facts: [] }] } }))).toBe(false);

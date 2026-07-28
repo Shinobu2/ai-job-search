@@ -53,6 +53,16 @@ test("classifies German service desk titles and does not assume 24/7 rotations a
   expect(result.gates).toContainEqual(expect.objectContaining({ id: "shift", status: "BLOCKED" }));
 });
 
+test("keeps uncued roles reviewable and recognizes NOC or IT-operations cues", async () => {
+  expect((await evaluateText("# Production Operator\nCompany: Bridge GmbH\nLocation: Frankfurt\n")).archetype).toBe("REVIEW");
+  expect((await evaluateText("# NOC Monitoring Technician\nSkills: IT operations and incident monitoring\n")).archetype).toBe("A");
+});
+
+test("does not treat the old garbage German-language cue as a requirement", async () => {
+  const result = await evaluateText("# Hardware Technician\nSkills: PC hardware\nLanguages: Gute ken oversight in German\n");
+  expect(result.gates.find((gate) => gate.id === "language")?.status).not.toBe("BLOCKED");
+});
+
 test("blocks mandatory and rotating nights using the verified candidate constraint", async () => {
   const mandatory = await evaluateFixture("night-shift.md");
   const rotating = await evaluateFixture("dct-trainee.md");
@@ -63,6 +73,29 @@ test("blocks mandatory and rotating nights using the verified candidate constrai
 test("does not let a no-rotation clause hide a mandatory night shift", async () => {
   const result = await evaluateText("# NOC Technician\nShift: Night shifts required; no rotating shifts\nSkills: monitoring and tickets\n");
   expect(result.gates).toContainEqual(expect.objectContaining({ id: "shift", status: "BLOCKED" }));
+});
+
+test("passes 24/7, night, weekend, and rotating shifts when candidate availability is confirmed", async () => {
+  const extracted = extractVacancy("# NOC Technician\nShift: 24/7 rotating night, weekend and holiday shifts required\nSkills: monitoring and tickets\n");
+  const result = evaluateVacancy({ id: "available_nights", title: "NOC Technician", company: null, location: null }, extracted, {
+    ...workspace,
+    profile: {
+      ...(workspace.profile as object),
+      constraints: {
+        ...(workspace.profile as { constraints: object }).constraints,
+        night_shifts: {
+          value: "available_including_night_rotating_weekend_holiday",
+          verification_status: "user_confirmed",
+          provenance: [{ source_type: "user_statement", source_ref: "test" }],
+        },
+      },
+    },
+  }, "2026-07-12");
+  expect(result.gates).toContainEqual(expect.objectContaining({
+    id: "shift",
+    status: "PASS",
+    facts: ["profile.constraints.night_shifts"],
+  }));
 });
 
 test("blocks reliable role requirements that contradict verified candidate facts", async () => {
@@ -86,8 +119,30 @@ test("keeps ambiguous net monthly salary separators VERIFY rather than guessing"
   expect(result.gates).toContainEqual(expect.objectContaining({
     id: "salary",
     status: "VERIFY",
-    reason: "Salary is unknown or cannot be compared deterministically",
+    reason: "Advertised salary requires labeled assumptions before net comparison",
+    facts: expect.arrayContaining(["posting.salary:€1,200 net per month"]),
   }));
+});
+
+test("recognizes German advertised salary formats but keeps gross or incomplete values VERIFY with raw facts", async () => {
+  for (const salary of [
+    "45.000 € brutto/Jahr",
+    "3.200 € brutto/Monat",
+    "18,50 €/Stunde",
+    "EUR 42000",
+  ]) {
+    const result = await evaluateText(`# Hardware Technician\nSalary: ${salary}\n`);
+    expect(result.gates).toContainEqual(expect.objectContaining({
+      id: "salary",
+      status: "VERIFY",
+      facts: expect.arrayContaining([`posting.salary:${salary}`]),
+    }));
+  }
+});
+
+test("compares an explicit German net monthly salary without inventing tax assumptions", async () => {
+  const result = await evaluateText("# Hardware Technician\nSalary: 1.850,00 € netto/Monat\n");
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "salary", status: "PASS" }));
 });
 
 test("ignores rejected, expired, and unknown profile values when evaluating gates", async () => {
@@ -251,6 +306,19 @@ test("blocks fließende/verhandlungssichere Deutschkenntnisse as binding German"
   }
 });
 
+test("recognizes binding German senior-experience requirements", async () => {
+  for (const experience of [
+    "Mindestens 3 Jahre Berufserfahrung erforderlich",
+    "Mehrjährige einschlägige Berufserfahrung zwingend vorausgesetzt",
+  ]) {
+    const result = await evaluateText(`# Hardware Technician\nExperience: ${experience}\n`);
+    expect(result.gates).toContainEqual(expect.objectContaining({
+      id: "experience",
+      status: "BLOCKED",
+    }));
+  }
+});
+
 test("blocks German phone helpdesk / Kundenservice am Telefon for an A2 candidate", async () => {
   const result = await evaluateText("# Hardware Technician\nSkills: PC hardware\nLanguages: German phone helpdesk support required\n");
   expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "BLOCKED", critical: true, facts: ["profile.languages.german"] }));
@@ -279,6 +347,17 @@ test("keeps absent critical posting facts as VERIFY", async () => {
   expect(result.gates).toContainEqual(expect.objectContaining({ id: "transport", status: "VERIFY", critical: true }));
   expect(result.gates).toContainEqual(expect.objectContaining({ id: "physical", status: "VERIFY", critical: true }));
   expect(result.gates).toContainEqual(expect.objectContaining({ id: "language", status: "VERIFY", critical: true }));
+});
+
+test("passes a fully English posting with no German-language cue", async () => {
+  const result = await evaluateText(
+    "# Data Center Technician\nSkills: Monitor server hardware, respond to incidents, document tickets, support the operations team and follow safety procedures\nExperience: Entry-level candidates are welcome\n",
+  );
+  expect(result.gates).toContainEqual(expect.objectContaining({
+    id: "language",
+    status: "PASS",
+    reason: "Posting is fully English with no German requirement",
+  }));
 });
 
 test("keeps absent or placeholder scope, facilities, and experience facts as critical VERIFY", async () => {
@@ -311,10 +390,20 @@ test("does not let mixed transport or physical wording hide mandatory requiremen
   expect(result.gates.find((gate) => gate.id === "physical")?.status).not.toBe("PASS");
 });
 
-test("blocks prolonged standing as a disqualifying physical demand", async () => {
-  const result = await evaluateText("# Hardware Technician\nPhysical: Prolonged standing required\nSkills: PC hardware\n");
+test("blocks prolonged standing for data-centre roles with the verified constraint", async () => {
+  const result = await evaluateText("# Data Center Hardware Technician\nPhysical: Prolonged standing required\nSkills: PC hardware\n");
   expect(result.gates).toContainEqual(expect.objectContaining({ id: "physical", status: "BLOCKED", critical: true }));
   expect(result.tier).toBe("C");
+});
+
+test("bridge roles block only combined continuous heavy work and prolonged standing", async () => {
+  const standingOnly = await evaluateText("# Production Operator\nPhysical: Prolonged standing required\n");
+  const moderate = await evaluateText("# Production Operator\nPhysical: Light to moderate physical work with occasional carrying\n");
+  const combined = await evaluateText("# Production Operator\nPhysical: Continuous heavy lifting and prolonged standing required throughout the shift\n");
+
+  expect(standingOnly.gates.find((gate) => gate.id === "physical")?.status).not.toBe("BLOCKED");
+  expect(moderate.gates.find((gate) => gate.id === "physical")?.status).not.toBe("BLOCKED");
+  expect(combined.gates).toContainEqual(expect.objectContaining({ id: "physical", status: "BLOCKED" }));
 });
 
 test("blocks repeated heavy lifting even without 'continuous heavy work' phrasing", async () => {
@@ -360,7 +449,7 @@ test("maps every material requirement once without promoting informal, planned, 
   }, "2026-07-12");
   expect(result.mappings).toHaveLength(extracted.requirements.length);
   expect(result.mappings.find((mapping) => mapping.requirementId === extracted.requirements[0].id)).toMatchObject({ status: "partial", evidenceIds: ["PC_HARDWARE"] });
-  expect(result.mappings.every((mapping) => ["proven", "partial", "transferable", "missing", "unknown", "contradicted"].includes(mapping.status))).toBe(true);
+  expect(result.mappings.every((mapping) => ["proven", "partial", "transferable", "missing", "unknown", "needs_model", "contradicted"].includes(mapping.status))).toBe(true);
 
   const restricted: ExtractedJob = {
     ...extracted,
@@ -377,8 +466,7 @@ test("maps every material requirement once without promoting informal, planned, 
       { id: "HOME_LAB_PLAN", kind: "planned_project", statement: "Planned home lab", reviewer_status: "UNKNOWN" },
     ],
   } }, "2026-07-12").mappings;
-  expect(restrictedMappings.map((mapping) => mapping.status)).toEqual(["contradicted", "unknown", "unknown", "missing"]);
-  expect(restrictedMappings.flatMap((mapping) => mapping.evidenceIds)).toEqual([]);
+  expect(restrictedMappings.map((mapping) => mapping.status)).toEqual(["contradicted", "needs_model", "needs_model", "missing"]);
 });
 
 test("does not turn home-lab, planned, or theory evidence into ordinary skills", async () => {
@@ -402,11 +490,11 @@ test("does not turn home-lab, planned, or theory evidence into ordinary skills",
       ],
     },
   }, "2026-07-12");
-  expect(result.mappings.map((mapping) => ({ status: mapping.status, evidenceIds: mapping.evidenceIds }))).toEqual([
-    { status: "unknown", evidenceIds: [] },
-    { status: "unknown", evidenceIds: [] },
-    { status: "unknown", evidenceIds: [] },
-    { status: "unknown", evidenceIds: [] },
+  expect(result.mappings.map((mapping) => mapping.status)).toEqual([
+    "needs_model",
+    "needs_model",
+    "needs_model",
+    "needs_model",
   ]);
 });
 
@@ -421,7 +509,39 @@ test("does not promote hyphenated home-lab evidence to a proven ordinary skill",
       records: [{ id: "HOME_LAB", kind: "hardware", statement: "Home-lab hardware troubleshooting", reviewer_status: "unreviewed" }],
     },
   }, "2026-07-12");
-  expect(result.mappings).toEqual([expect.objectContaining({ status: "unknown", evidenceIds: [] })]);
+  expect(result.mappings).toEqual([expect.objectContaining({ status: "needs_model" })]);
+});
+
+test("maps evidence at 0.5 content-token overlap and sends uncertain overlap to the model", async () => {
+  const extracted = extractVacancy("# Hardware Technician\nSkills: server hardware replacement\n");
+  const result = evaluateVacancy({ id: "token_overlap", title: null, company: null, location: null }, {
+    ...extracted,
+    requirements: [
+      { id: "half_overlap", type: "skill", text: "server hardware replacement diagnostics", spans: [], rule_ids: [] },
+      { id: "uncertain_overlap", type: "skill", text: "network routing firewall diagnostics", spans: [], rule_ids: [] },
+    ],
+  }, {
+    ...workspace,
+    evidence: { records: [
+      {
+        id: "HANDS_ON",
+        kind: "hands_on",
+        statement: "Candidate performed server hardware installation and replacement.",
+        reviewer_status: "user_confirmed",
+        provenance: [{ source_type: "user_statement", source_ref: "test" }],
+      },
+      {
+        id: "HOME_LAB",
+        kind: "home_lab",
+        statement: "Home-lab network routing diagnostics.",
+        reviewer_status: "user_confirmed",
+        provenance: [{ source_type: "user_statement", source_ref: "test" }],
+      },
+    ] },
+  } as unknown as WorkspaceSnapshot, "2026-07-12");
+
+  expect(result.mappings[0]).toMatchObject({ status: "proven", evidenceIds: ["HANDS_ON"] });
+  expect(result.mappings[1]).toMatchObject({ status: "needs_model", evidenceIds: ["HOME_LAB"] });
 });
 
 test("maps schema-valid unreviewed evidence as partial instead of inventing review", async () => {

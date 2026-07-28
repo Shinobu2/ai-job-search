@@ -12,7 +12,7 @@ export function renderResultCard(result: DisplayResult): string {
     .filter((mapping) => ["proven", "partial", "transferable"].includes(mapping.status))
     .map((mapping) => `${mapping.requirementId} (${mapping.status}; evidence: ${mapping.evidenceIds.join(", ") || "none"})`);
   const gaps = result.mappings
-    .filter((mapping) => ["missing", "unknown", "contradicted"].includes(mapping.status))
+    .filter((mapping) => ["missing", "unknown", "needs_model", "contradicted"].includes(mapping.status))
     .map((mapping) => `${mapping.requirementId} (${mapping.status})`);
   const verifies = result.gates.filter((gate) => gate.status === "VERIFY").map((gate) => gate.reason);
   const nextAction = result.verdict === "BLOCKED" ? "Do not apply; record the blocker if the posting changes."

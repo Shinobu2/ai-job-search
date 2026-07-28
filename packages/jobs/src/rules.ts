@@ -13,7 +13,7 @@ type Taxonomy = {
 
 type EvaluationRules = {
   version: string;
-  mapping_credits: Record<"proven" | "partial" | "transferable" | "missing" | "unknown" | "contradicted", number>;
+  mapping_credits: Record<"proven" | "partial" | "transferable" | "missing" | "unknown" | "needs_model" | "contradicted", number>;
   requirement_weight: number;
   salary_floor_eur: number;
   tier_bands: { S: number; A: number; B: number };
@@ -32,7 +32,7 @@ function includesAny(text: string, cues: string[]): boolean {
   return cues.some((cue) => text.includes(cue));
 }
 
-export function classify(extracted: ExtractedJob): "A" | "AT" | "BT" | "F" | "X" {
+export function classify(extracted: ExtractedJob): "A" | "AT" | "BT" | "F" | "REVIEW" | "X" {
   const text = textOf(extracted);
   if (includesAny(text, taxonomy.forced_x_cues)) return "X";
   const facilities = includesAny(text, taxonomy.facilities_cues);
@@ -42,7 +42,7 @@ export function classify(extracted: ExtractedJob): "A" | "AT" | "BT" | "F" | "X"
   if (facilities) return "X";
   if (includesAny(text, taxonomy.hardware_cues)) return "A";
   if (includesAny(text, taxonomy.support_cues)) return "F";
-  return "X";
+  return "REVIEW";
 }
 
 export function gate(id: string, status: GateStatus, critical: boolean, reason: string, facts: string[] = []): Gate {

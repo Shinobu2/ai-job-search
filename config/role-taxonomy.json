@@ -1,8 +1,8 @@
 {
   "version": "role-taxonomy-v1",
-  "forced_x_cues": ["warehouse", "conveyor", "high-voltage maintenance", "licensed electrician"],
+  "forced_x_cues": ["warehouse operative", "warehouse worker", "lagermitarbeiter", "kommissionierer", "picker/packer", "conveyor", "high-voltage maintenance", "licensed electrician"],
   "facilities_cues": ["facilities", "ups", "generator", "hvac", "electrical switching", "critical switching", "high-voltage"],
   "trainee_cues": ["trainee", "training", "junior programme", "ausbildung", "auszubildende", "auszubildender"],
-  "hardware_cues": ["data center", "datacenter", "rechenzentrum", "hardware", "server", "cabling", "verkabelung", "linux"],
+  "hardware_cues": ["data center", "datacenter", "rechenzentrum", "hardware", "server", "cabling", "verkabelung", "linux", "noc", "network operations center", "network operations centre", "infrastructure monitoring", "it operations", "technical operations"],
   "support_cues": ["support", "helpdesk", "help desk", "service desk", "ticketing", "active directory", "user support", "it-systemelektroniker", "systemelektroniker", "servicetechniker", "netzwerktechniker"]
 }

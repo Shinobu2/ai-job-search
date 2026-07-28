@@ -34,6 +34,7 @@ export type DiscoveredJob = {
   logicalVacancyId: string;
   version: number;
   actionable: boolean;
+  needs_review?: boolean;
   evaluation?: EvaluationResult;
 };
 
@@ -70,7 +71,16 @@ export function isActionableDiscoveryJob(job: DiscoveredJob): boolean {
   return job.actionable
     && evaluation !== undefined
     && evaluation.archetype !== "X"
-    && evaluation.tier !== "C"
     && evaluation.verdict !== "BLOCKED"
     && !evaluation.gates.some((gate) => gate.status === "BLOCKED");
+}
+
+export function discoveryJobNeedsReview(job: DiscoveredJob): boolean {
+  const evaluation = job.evaluation;
+  return job.needs_review === true
+    || evaluation === undefined
+    || evaluation.archetype === "REVIEW"
+    || evaluation.tier === "C"
+    || evaluation.verdict === "VERIFY"
+    || evaluation.gates.some((gate) => gate.status === "VERIFY");
 }
