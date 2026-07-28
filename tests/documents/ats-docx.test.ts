@@ -43,7 +43,7 @@ test("ATS QA detects symbol/icon XML and contacts in footers", async () => {
 
 test("ATS DOCX places exact planned §24 wording in the body header once", async () => {
   const workAuthorization =
-    "I am relocating to Frankfurt am Main on 7 August 2026 and will hold a residence permit under §24 AufenthG (temporary protection), which includes full access to the German labour market — no employer sponsorship is required. I am available to start from 17 August 2026.";
+    "I am relocating to Frankfurt am Main on 7 August 2026 and plan to apply for a residence permit under §24 AufenthG (temporary protection) after arrival; German work authorization has not yet been issued. No employer sponsorship is required. I can start no earlier than 17 August 2026, and only after receiving an Aufenthaltstitel or Fiktionsbescheinigung that explicitly permits employment.";
   const bytes = await buildAtsDocx({ ...model, workAuthorization, availability: null });
   const zip = await JSZip.loadAsync(bytes);
   const xml = await zip.file("word/document.xml")!.async("string");

@@ -65,12 +65,13 @@ const plannedAuthorizationProfile = {
 
 test("planned §24 wording is exact and never claims the permit is already issued", () => {
   expect(workAuthorizationWording.en).toBe(
-    "I am relocating to Frankfurt am Main on 7 August 2026 and will hold a residence permit under §24 AufenthG (temporary protection), which includes full access to the German labour market — no employer sponsorship is required. I am available to start from 17 August 2026.",
+    "I am relocating to Frankfurt am Main on 7 August 2026 and plan to apply for a residence permit under §24 AufenthG (temporary protection) after arrival; German work authorization has not yet been issued. No employer sponsorship is required. I can start no earlier than 17 August 2026, and only after receiving an Aufenthaltstitel or Fiktionsbescheinigung that explicitly permits employment.",
   );
   expect(workAuthorizationWording.de).toBe(
-    "Ich ziehe am 7. August 2026 nach Frankfurt am Main und erhalte eine Aufenthaltserlaubnis nach §24 AufenthG, die eine uneingeschränkte Erwerbstätigkeit erlaubt — ein Sponsoring durch den Arbeitgeber ist nicht erforderlich. Ich kann ab dem 17. August 2026 beginnen.",
+    "Ich ziehe am 7. August 2026 nach Frankfurt am Main und plane, nach meiner Ankunft einen Aufenthaltstitel nach §24 AufenthG (vorübergehender Schutz) zu beantragen; eine Erlaubnis zur Erwerbstätigkeit liegt derzeit noch nicht vor. Ein Sponsoring durch den Arbeitgeber ist nicht erforderlich. Ich kann frühestens am 17. August 2026 und nur dann beginnen, wenn mir ein Aufenthaltstitel oder eine Fiktionsbescheinigung mit ausdrücklicher Erlaubnis zur Erwerbstätigkeit ausgestellt wurde.",
   );
-  expect(workAuthorizationWording.en).not.toContain("already");
+  expect(workAuthorizationWording.en).not.toContain("will hold");
+  expect(workAuthorizationWording.de).not.toContain("erhalte eine Aufenthaltserlaubnis");
 });
 
 test("answer matrix safely answers §24 sponsorship and authorization questions", () => {
@@ -121,7 +122,7 @@ test("answer matrix safely answers §24 sponsorship and authorization questions"
     sensitive: false,
   });
   expect(matrix.fields[1]).toMatchObject({
-    proposed_value: "Yes — available to start from 17 August 2026 under planned §24 authorization; no employer sponsorship required.",
+    proposed_value: workAuthorizationWording.en,
     status: "known",
     sensitive: false,
   });
@@ -131,4 +132,26 @@ test("answer matrix safely answers §24 sponsorship and authorization questions"
     sensitive: true,
   });
   expect(matrix.blockers).toContain("Authorized to work (yes/no only): explicit user decision required");
+
+  const germanMatrix = prepareApplicationAnswerMatrix({
+    fields: [
+      {
+        field: "Sind Sie berechtigt, in Deutschland zu arbeiten?",
+        proposed_value: null,
+        source_evidence: [],
+        status: "ask",
+        sensitive: false,
+        last_confirmed_date: null,
+        required: true,
+        category: "work_authorization",
+        question_intent: "authorized_to_work",
+        comment_supported: true,
+      },
+    ],
+  }, plannedAuthorizationProfile, "2026-07-28", "de");
+  expect(germanMatrix.fields[0]).toMatchObject({
+    proposed_value: workAuthorizationWording.de,
+    status: "known",
+    sensitive: false,
+  });
 });
