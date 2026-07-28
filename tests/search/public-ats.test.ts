@@ -13,7 +13,7 @@ test("Greenhouse public board imports an exact live posting", async () => {
   const db = openDatabase(":memory:"); migrate(db);
   try {
     const batch = await discoverGreenhouseEmployer(
-      { id: "hellofresh", name: "HelloFresh", cities: ["Frankfurt"], career_url: "https://job-boards.greenhouse.io/hellofresh", ats: "greenhouse", policy: "public_ats_endpoint", enabled: true },
+      { id: "hellofresh", name: "HelloFresh", track: "bridge", cities: ["Frankfurt"], career_url: "https://job-boards.greenhouse.io/hellofresh", ats: "greenhouse", policy: "public_ats_endpoint", enabled: true },
       new StorageRepository(db), workspace as never,
       {
         evaluate: false,
@@ -29,7 +29,7 @@ test("Lever public postings import an exact live posting", async () => {
   const db = openDatabase(":memory:"); migrate(db);
   try {
     const batch = await discoverLeverEmployer(
-      { id: "crytek", name: "Crytek", cities: ["Frankfurt"], career_url: "https://jobs.lever.co/crytek", ats: "lever", policy: "public_ats_endpoint", enabled: true },
+      { id: "crytek", name: "Crytek", track: "bridge", cities: ["Frankfurt"], career_url: "https://jobs.lever.co/crytek", ats: "lever", policy: "public_ats_endpoint", enabled: true },
       new StorageRepository(db), workspace as never,
       {
         evaluate: false,

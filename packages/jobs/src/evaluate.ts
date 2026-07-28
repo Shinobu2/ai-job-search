@@ -9,7 +9,13 @@ type Profile = {
   transport?: { driver_licence?: Verified<boolean>; has_car?: Verified<boolean> };
   languages?: { english?: Verified<{ self_assessed_level?: string }>; german?: Verified<{ self_assessed_level?: string }> };
   constraints?: { night_shifts?: Verified<string>; continuous_heavy_work?: Verified<string> };
-  compensation?: { net_monthly_estimate?: Verified<{ floor_eur?: number }> };
+  compensation?: {
+    net_monthly_estimate?: Verified<{
+      floor_eur?: number;
+      target_eur?: number;
+      floor_policy?: string;
+    }>;
+  };
 };
 type Evidence = {
   id: string;
@@ -204,9 +210,11 @@ function mandatorySeniorExperienceRequired(text: string): boolean {
   return textClauses(text).some((clause) => {
     const optional = /\b(?:wünschenswert|von vorteil|optional|preferred|nice to have)\b/i.test(clause);
     const years = /\b(?:mindestens|mind\.?)\s*[3-9]\s*jahre?\s+(?:einschlägige\s+)?berufserfahrung\b/i.test(clause);
+    const yearsBeforeExperience = /\b[3-9]\+?\s*jahre?\s+(?:einschlägige\s+)?(?:berufs)?erfahrung\b/i.test(clause);
+    const experienceBeforeYears = /\bberufserfahrung\s+von\s+(?:mindestens|mind\.?)\s*[3-9]\s*jahre?n?\b/i.test(clause);
     const multiYear = /\b(?:mehrjährige|langjährige)\s+(?:einschlägige\s+)?berufserfahrung\b/i.test(clause)
       && /\b(?:erforderlich|zwingend|vorausgesetzt|notwendig)\b/i.test(clause);
-    return !optional && (years || multiYear);
+    return !optional && (years || yearsBeforeExperience || experienceBeforeYears || multiYear);
   });
 }
 
@@ -263,7 +271,15 @@ function advertisedSalaryFacts(salary: string | null): string[] {
   return [`posting.salary:${salary}`, assumption];
 }
 
-function gatesFor(archetype: EvaluationResult["archetype"], extracted: ExtractedJob, workspace: WorkspaceSnapshot, asOf: string): Gate[] {
+export type EvaluationContext = { track?: "datacenter" | "bridge" };
+
+function gatesFor(
+  archetype: EvaluationResult["archetype"],
+  extracted: ExtractedJob,
+  workspace: WorkspaceSnapshot,
+  asOf: string,
+  context: EvaluationContext,
+): Gate[] {
   const profile = profileOf(workspace);
   const shift = field(extracted, "shift");
   const car = field(extracted, "car");
@@ -309,7 +325,7 @@ function gatesFor(archetype: EvaluationResult["archetype"], extracted: Extracted
       const physicalConstraint = profile.constraints?.continuous_heavy_work;
       const blocksPhysicalWork = verified(physicalConstraint)
         && /blocked|avoid_continuous_heavy_work|light_or_moderate_physical_work_only/i.test(physicalConstraint.value);
-      if (archetype === "REVIEW") {
+      if (context.track === "bridge") {
         if (excludedBridgeEnvironment(physicalText) && blocksPhysicalWork) {
           return gate("physical", "BLOCKED", true, "Work environment conflicts with the verified light/moderate-work constraint", ["profile.constraints.continuous_heavy_work"]);
         }
@@ -334,11 +350,19 @@ function gatesFor(archetype: EvaluationResult["archetype"], extracted: Extracted
       return gate("physical", "VERIFY", true, "Physical requirement needs confirmation");
     })(),
     scope: !skills || placeholder(skills) ? gate("scope", "VERIFY", true, "Role scope is unknown")
+      : context.track === "bridge" && includes(skills, /conveyor/i)
+        ? gate("scope", "BLOCKED", true, "Conveyor work conflicts with the verified physical constraint", ["posting.skills"])
+      : context.track === "bridge" && includes(skills, /warehouse/i)
+        ? gate("scope", "PASS_WITH_RISK", false, "Warehouse IT context is allowed; physical load must be reviewed separately", ["posting.skills"])
       : includes(skills, /warehouse|conveyor/i) ? gate("scope", "BLOCKED", true, "Warehouse or conveyor work is outside scope", ["posting.skills"])
         : /\bmass\s+rack(?:ing|ed)?\b|\broutine\s+rack\s+(?:install|decommission)/i.test(skills ?? "")
           ? gate("scope", "BLOCKED", true, "Routine mass rack install/decommission is outside scope", ["posting.skills"])
           : gate("scope", "PASS", false, "No warehouse or conveyor requirement"),
-    facilities: includes(`${skills} ${education}`, /electrical|hvac|high-voltage|critical switching/i) && archetype !== "BT"
+    facilities: includes(`${skills} ${education}`, /hvac|high[- ]voltage|critical switching/i) && archetype !== "BT"
+      ? gate("facilities", "BLOCKED", true, "HVAC, high-voltage, or critical switching work requires unproven hands-on qualification", ["posting.skills", "posting.education"])
+      : context.track === "bridge" && includes(`${skills} ${education}`, /(?:electronics?|electrical)\s+(?:assembly|assembler|production)/i)
+      ? gate("facilities", "PASS_WITH_RISK", false, "Bridge electronics work is allowed; qualification details need model review", ["posting.skills"])
+      : includes(`${skills} ${education}`, /electrical/i) && archetype !== "BT"
       ? gate("facilities", "BLOCKED", true, "Electrical or HVAC work requires unproven hands-on qualification", ["posting.skills", "posting.education"])
       : !skills || placeholder(skills) || !education || placeholder(education)
         ? gate("facilities", "VERIFY", true, "Facilities requirements are unknown")
@@ -409,6 +433,11 @@ function gatesFor(archetype: EvaluationResult["archetype"], extracted: Extracted
       }
       if (amount < floor.value.floor_eur) {
         return gate("salary", "BLOCKED", true, "Explicit net salary is below the verified floor", ["profile.compensation.net_monthly_estimate", `posting.salary:${salary}`]);
+      }
+      if (floor.value.floor_policy === "last_resort_only_if_no_better_options"
+        && typeof floor.value.target_eur === "number"
+        && amount < floor.value.target_eur) {
+        return gate("salary", "EMERGENCY_ONLY", false, "Explicit net salary is above the floor but below the verified target; use only if no better credible option exists", ["profile.compensation.net_monthly_estimate", `posting.salary:${salary}`]);
       }
       return gate("salary", "PASS", false, "Explicit net salary meets the verified floor", ["profile.compensation.net_monthly_estimate", `posting.salary:${salary}`]);
     })(),
@@ -506,9 +535,16 @@ function fingerprint(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-export function evaluateVacancy(job: StoredJob, extracted: ExtractedJob, workspace: WorkspaceSnapshot, asOf: string): EvaluationResult {
+export function evaluateVacancy(
+  job: StoredJob,
+  extracted: ExtractedJob,
+  workspace: WorkspaceSnapshot,
+  asOf: string,
+  context: EvaluationContext = { track: "datacenter" },
+): EvaluationResult {
   const archetype = classify(extracted);
-  const gates = gatesFor(archetype, extracted, workspace, asOf);
+  const normalizedContext: Required<EvaluationContext> = { track: context.track ?? "datacenter" };
+  const gates = gatesFor(archetype, extracted, workspace, asOf, normalizedContext);
   const mappings = extracted.requirements.map((requirement) => mappingFor(requirement, evidenceOf(workspace)));
   const totalWeight = mappings.length * evaluationRules.requirement_weight;
   const fit = totalWeight === 0 ? 0 : Math.round(mappings.reduce((total, mapping) => total + mapping.credit * evaluationRules.requirement_weight, 0) / totalWeight);
@@ -522,7 +558,7 @@ export function evaluateVacancy(job: StoredJob, extracted: ExtractedJob, workspa
   if (blocked || archetype === "X") tier = "C";
   const verdict = blocked ? "BLOCKED" : criticalVerify ? "VERIFY" : "PROCEED";
   const resultWithoutFingerprint = { jobId: job.id, archetype, gates, mappings, fit, survival, confidence, tier, verdict };
-  return { ...resultWithoutFingerprint, fingerprint: fingerprint({ taxonomy: taxonomy.version, rules: evaluationRules.version, extracted, workspace, asOf, resultWithoutFingerprint }) };
+  return { ...resultWithoutFingerprint, fingerprint: fingerprint({ taxonomy: taxonomy.version, rules: evaluationRules.version, extracted, workspace, asOf, context: normalizedContext, resultWithoutFingerprint }) };
 }
 
 function derivedId(prefix: string, value: string): string {

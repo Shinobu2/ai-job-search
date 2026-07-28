@@ -1,5 +1,14 @@
 import { expect, test } from "bun:test";
-import { fetchWithRetry, mapBounded, prioritizeByLocation, roundRobinScopes } from "../../packages/search/src/scheduler";
+import {
+  createDiscoveryLoopState,
+  discoveryStatus,
+  discoveryScopeSummary,
+  fetchWithRetry,
+  mapBounded,
+  normalizedDiscoveryScope,
+  prioritizeByLocation,
+  roundRobinScopes,
+} from "../../packages/search/src/scheduler";
 
 test("roundRobinScopes returns the stable keyword-by-city cross product", () => {
   expect(roundRobinScopes(["network", "data center"], ["Frankfurt", "Eschborn"])).toEqual([
@@ -9,6 +18,41 @@ test("roundRobinScopes returns the stable keyword-by-city cross product", () => 
     { keyword: "data center", city: "Eschborn" },
   ]);
   expect(roundRobinScopes([], ["Frankfurt"])).toEqual([]);
+});
+
+test("shared discovery helpers retain track, native filters, and loop progress", () => {
+  const source = {
+    id: "jobsuche",
+    track: "bridge" as const,
+    keywords: ["IT Rollout"],
+    cities: ["Frankfurt"],
+    country: "DE",
+    max_pages: 2,
+    page_size: 10,
+    radius_km: 80,
+    published_within_days: 14,
+    working_time: ["vz", "snw"],
+  };
+  expect(normalizedDiscoveryScope(source)).toEqual({
+    track: "bridge",
+    keywords: ["it rollout"],
+    cities: ["frankfurt"],
+    country: "DE",
+    maxPages: 2,
+    pageSize: 10,
+    radiusKm: 80,
+    publishedWithinDays: 14,
+    workingTime: ["vz", "snw"],
+  });
+  const state = createDiscoveryLoopState(source.keywords, source.cities);
+  state.completedScopes.add(0);
+  expect(discoveryScopeSummary(state)).toEqual({ planned: 1, completed: 1, failed: 0 });
+});
+
+test("truncated discovery runs stay partial so unseen vacancies are not aged", () => {
+  const counters = { searched: 1, detailed: 1, imported: 1, skipped: 2, failed: 0 };
+  expect(discoveryStatus(counters)).toBe("success");
+  expect(discoveryStatus(counters, true)).toBe("partial");
 });
 
 test("location prioritization keeps local roles ahead of unknown and out-of-area roles", () => {

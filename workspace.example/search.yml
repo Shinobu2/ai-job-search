@@ -2,56 +2,84 @@ schema_version: 1
 discovery:
   sources:
     - id: freehire
+      track: datacenter
       enabled: true
       mode: read_import_evaluate
       country: DE
-      cities:
-        - Frankfurt
-        - Eschborn
-        - Offenbach
-        - Neu-Isenburg
-        - Langen
-        - Kelsterbach
-        - Darmstadt
-        - Wiesbaden
-        - Mainz
-        - Rüsselsheim am Main
-        - Raunheim
-        - Hanau
-        - Bad Homburg
+      cities: [Frankfurt, Eschborn, Offenbach, Darmstadt, Wiesbaden, Mainz]
       keywords:
         - data center technician
+        - data centre technician
         - remote hands
         - NOC technician
-        - IT support English
+        - IT operations technician
+        - hardware technician
         - rechenzentrumstechniker
-        - it systemelektroniker
+        - IT-Systemelektroniker
+        - Servicetechniker IT Infrastruktur
+        - Quereinsteiger Rechenzentrum
+      max_pages: 1
+      page_size: 10
+    - id: freehire
+      track: bridge
+      enabled: true
+      mode: read_import_evaluate
+      country: DE
+      cities: [Frankfurt, Eschborn, Offenbach, Darmstadt, Wiesbaden, Mainz]
+      keywords:
+        - Produktionsmitarbeiter Technik
+        - Maschinenbediener
+        - Anlagenbediener
+        - Qualitätsprüfer Elektronik
+        - Elektronikmontage
+        - IT Rollout Techniker
+        - Break Fix Techniker
+        - Warehouse IT Scanner Support
+        - Service Desk English
+        - Quereinsteiger IT Technik
       max_pages: 1
       page_size: 10
     - id: jobsuche
+      track: datacenter
       enabled: false
       mode: read_import_evaluate
       country: DE
-      cities:
-        - Frankfurt
-        - Eschborn
-        - Offenbach
-        - Neu-Isenburg
-        - Langen
-        - Kelsterbach
-        - Darmstadt
-        - Wiesbaden
-        - Mainz
-        - Rüsselsheim am Main
-        - Raunheim
-        - Hanau
-        - Bad Homburg
+      cities: [Frankfurt]
       keywords:
         - data center technician
         - remote hands
         - NOC technician
-        - IT support English
+        - IT operations technician
         - rechenzentrumstechniker
-        - it systemelektroniker
+        - IT-Systemelektroniker
+        - Servicetechniker IT Infrastruktur
+        - Quereinsteiger Rechenzentrum
+      radius_km: 80
+      published_within_days: 14
+      working_time: [vz, snw]
+      include_temporary_work: true
+      max_pages: 1
+      page_size: 10
+    - id: jobsuche
+      track: bridge
+      enabled: false
+      mode: read_import_evaluate
+      country: DE
+      cities: [Frankfurt]
+      keywords:
+        - Produktionsmitarbeiter Technik
+        - Maschinenbediener
+        - Anlagenbediener
+        - Qualitätsprüfer Elektronik
+        - Elektronikmontage
+        - IT Rollout Techniker
+        - Break Fix Techniker
+        - Warehouse IT Scanner Support
+        - Service Desk English
+        - Quereinsteiger IT Technik
+      radius_km: 80
+      published_within_days: 14
+      working_time: [vz, snw]
+      include_temporary_work: true
       max_pages: 1
       page_size: 10

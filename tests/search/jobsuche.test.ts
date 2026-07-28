@@ -16,8 +16,9 @@ const workspace = {
 };
 
 const source: JobsucheSourceConfig = {
-  id: "jobsuche", enabled: true, mode: "read_import_evaluate", country: "DE",
+  id: "jobsuche", track: "datacenter", enabled: true, mode: "read_import_evaluate", country: "DE",
   cities: ["Frankfurt"], keywords: ["data center technician"], max_pages: 1, page_size: 5,
+  radius_km: 80, published_within_days: 14, working_time: ["vz", "snw"],
 };
 
 function response(value: unknown): Response {
@@ -53,10 +54,18 @@ test("Jobsuche reads bounded official search and details, then preserves refnr, 
     const second = await discoverJobsuche(source, repository, workspace as never, { asOf: "2026-07-12" });
 
     expect(requested).toHaveLength(6);
-    expect(requested.filter((request) => request.url.includes("/pc/v6/jobs?")).every((request) => request.url.includes("was=data+center+technician") && request.url.includes("wo=Frankfurt") && request.url.includes("page=1") && request.url.includes("size=5"))).toBe(true);
+    expect(requested.filter((request) => request.url.includes("/pc/v6/jobs?")).every((request) =>
+      request.url.includes("was=data+center+technician")
+      && request.url.includes("wo=Frankfurt")
+      && request.url.includes("page=1")
+      && request.url.includes("size=5")
+      && request.url.includes("umkreis=80")
+      && request.url.includes("veroeffentlichtseit=14")
+      && request.url.includes("arbeitszeit=vz%3Bsnw"))).toBe(true);
     expect(requested.every((request) => request.headers.get("X-API-Key") === "jobboerse-jobsuche" && request.redirect === "error")).toBe(true);
     expect(first.jobs).toHaveLength(1);
-    expect(first.jobs[0]).toMatchObject({ sourceId: "jobsuche:10001-1002716922-S", stableSourceId: "jobsuche:10001-1002716922-S", sourceUrl: "https://jobs.example/dct", reused: false, title: "Data Center Technician", actionable: true, logicalVacancyId: expect.stringContaining("vacancy_"), version: 1 });
+    expect(first).toMatchObject({ sourceId: "jobsuche:datacenter", track: "datacenter" });
+    expect(first.jobs[0]).toMatchObject({ sourceId: "jobsuche:10001-1002716922-S", stableSourceId: "jobsuche:10001-1002716922-S", sourceUrl: "https://jobs.example/dct", reused: false, title: "Data Center Technician", track: "datacenter", actionable: true, needs_review: true, logicalVacancyId: expect.stringContaining("vacancy_"), version: 1 });
     expect(second.jobs[0]?.reused).toBe(true);
     expect(first.status).toBe("partial");
     expect(first.scope).toEqual({ planned: 1, completed: 1, failed: 0 });
@@ -99,6 +108,56 @@ test("Jobsuche completes every keyword-city page round before starting the next 
       "network:Frankfurt:2", "network:Eschborn:2", "data:Frankfurt:2", "data:Eschborn:2",
     ]);
     expect(batch.counters).toMatchObject({ searched: 8, detailed: 4, imported: 4, failed: 0 });
+  } finally {
+    globalThis.fetch = originalFetch;
+    db.close();
+  }
+});
+
+test("Jobsuche uses bilingual config-driven bridge skill extraction", async () => {
+  const db = openDatabase(":memory:");
+  migrate(db);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL) => {
+    const url = String(input);
+    if (url.includes("/pc/v6/jobs?")) return response({ ergebnisliste: [{ referenznummer: "bridge" }] });
+    return response({
+      referenznummer: "bridge",
+      stellenangebotsTitel: "Quereinsteiger IT Rollout",
+      firma: "Fixture",
+      arbeitsorte: [{ ort: "Frankfurt" }],
+      stellenangebotsBeschreibung: "Gerätemontage, Qualitätsprüfung, Scanner-Support, IT-Rollout und Break-Fix. Active Directory, ITIL, Ticketsystem, Störungsbehebung, Verkabelung, Benutzersupport, Netzwerk, RAID, SFP und KVM. Quereinsteiger willkommen.",
+    });
+  }) as typeof fetch;
+  try {
+    await discoverJobsuche({ ...source, track: "bridge" }, new StorageRepository(db), workspace as never);
+    const stored = db.query("SELECT raw_content FROM job_sources").get() as { raw_content: string };
+    expect(stored.raw_content).toContain("electronics assembly");
+    expect(stored.raw_content).toContain("quality inspection");
+    expect(stored.raw_content).toContain("warehouse IT / scanner support");
+    expect(stored.raw_content).toContain("IT rollout / break-fix");
+    expect(stored.raw_content).toContain("career changer welcome");
+    expect(stored.raw_content).toContain("Windows Server / AD / DNS / DHCP");
+    expect(stored.raw_content).toContain("ITIL / ticket handling");
+    expect(stored.raw_content).toContain("user support");
+    expect(stored.raw_content).toContain("RAID / SFP / KVM");
+  } finally {
+    globalThis.fetch = originalFetch;
+    db.close();
+  }
+});
+
+test("Jobsuche counts a missing detail identity once as skipped", async () => {
+  const db = openDatabase(":memory:");
+  migrate(db);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL) => String(input).includes("/pc/v6/jobs?")
+    ? response({ ergebnisliste: [{ referenznummer: "missing-title" }] })
+    : response({ referenznummer: "missing-title" })) as typeof fetch;
+  try {
+    const batch = await discoverJobsuche(source, new StorageRepository(db), workspace as never);
+    expect(batch.counters).toMatchObject({ searched: 1, detailed: 1, imported: 0, skipped: 1, failed: 0 });
+    expect(batch.diagnostics).toEqual([expect.objectContaining({ code: "missing_identity" })]);
   } finally {
     globalThis.fetch = originalFetch;
     db.close();
@@ -213,6 +272,29 @@ test("Jobsuche keeps valid siblings when a search list contains null", async () 
   }
 });
 
+test("Jobsuche accepts a valid zero-result envelope without a listing field", async () => {
+  const db = openDatabase(":memory:");
+  migrate(db);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => response({
+    maxErgebnisse: 0,
+    page: 1,
+    size: 5,
+    woOutput: { bereinigterOrt: "Frankfurt am Main" },
+    facetten: {},
+  })) as unknown as typeof fetch;
+  try {
+    const batch = await discoverJobsuche(source, new StorageRepository(db), workspace as never);
+    expect(batch.jobs).toEqual([]);
+    expect(batch.diagnostics).toEqual([]);
+    expect(batch.counters).toEqual({ searched: 1, detailed: 0, imported: 0, skipped: 0, failed: 0 });
+    expect(db.query("SELECT status FROM discovery_runs").get()).toEqual({ status: "success" });
+  } finally {
+    globalThis.fetch = originalFetch;
+    db.close();
+  }
+});
+
 test("Jobsuche rejects non-scalar search and detail identity fields and always finishes the run", async () => {
   const malformedRecords = [
     { stage: "search", field: "referenznummer", value: 42 },
@@ -264,7 +346,7 @@ test("Jobsuche empty planned scopes fail diagnostically without network access",
   }
 });
 
-test("Jobsuche stores out-of-area and unknown-location jobs but marks only the former non-actionable", async () => {
+test("Jobsuche trusts its native radius filter and keeps returned locations reviewable", async () => {
   const db = openDatabase(":memory:");
   migrate(db);
   const originalFetch = globalThis.fetch;
@@ -277,11 +359,11 @@ test("Jobsuche stores out-of-area and unknown-location jobs but marks only the f
   try {
     const batch = await discoverJobsuche(source, new StorageRepository(db), workspace as never);
     expect(batch.jobs.map(({ sourceId, actionable }) => ({ sourceId, actionable }))).toEqual([
-      { sourceId: "jobsuche:outside", actionable: false },
+      { sourceId: "jobsuche:outside", actionable: true },
       { sourceId: "jobsuche:unknown", actionable: true },
     ]);
-    expect(batch.diagnostics.map((entry) => entry.code)).toEqual(["out_of_area", "location_unknown"]);
-    expect(batch.counters).toMatchObject({ imported: 2, skipped: 1, failed: 0 });
+    expect(batch.diagnostics.map((entry) => entry.code)).toEqual(["location_unknown"]);
+    expect(batch.counters).toMatchObject({ imported: 2, skipped: 0, failed: 0 });
     expect(db.query("SELECT COUNT(*) AS count FROM discovery_observations").get()).toEqual({ count: 2 });
   } finally {
     globalThis.fetch = originalFetch;

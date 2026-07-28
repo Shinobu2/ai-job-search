@@ -19,7 +19,8 @@ function payload(job: unknown) {
 function discoveryJob(overrides: Partial<DiscoveredJob> = {}): DiscoveredJob {
   return {
     id: "job", reused: false, sourceId: "source", stableSourceId: "source", sourceUrl: "https://jobs.example/job",
-    title: "Technician", company: "Fixture", location: "Frankfurt", logicalVacancyId: "vacancy", version: 1, actionable: true,
+    title: "Technician", company: "Fixture", location: "Frankfurt", logicalVacancyId: "vacancy", version: 1,
+    track: "datacenter", actionable: true, needs_review: false,
     evaluation: { jobId: "job", archetype: "A", gates: [], mappings: [], fit: 50, survival: null, confidence: "medium", tier: "B", verdict: "PROCEED", fingerprint: "hash" },
     ...overrides,
   };
@@ -43,10 +44,21 @@ test("search schema accepts a read-only Jobsuche source without breaking FreeHir
   expect(() => validateWorkspaceFile("search", {
     schema_version: 1,
     discovery: { sources: [{
-      id: "jobsuche", enabled: true, mode: "read_import_evaluate", country: "DE",
+      id: "jobsuche", track: "datacenter", enabled: true, mode: "read_import_evaluate", country: "DE",
       cities: ["Frankfurt"], keywords: ["data center technician"], max_pages: 1, page_size: 5,
+      radius_km: 80, published_within_days: 14, working_time: ["vz", "snw"],
     }] },
   })).not.toThrow();
+});
+
+test("search schema requires a datacenter or bridge track", () => {
+  expect(() => validateWorkspaceFile("search", {
+    schema_version: 1,
+    discovery: { sources: [{
+      id: "freehire", enabled: true, mode: "read_import_evaluate", country: "DE",
+      cities: ["Frankfurt"], keywords: ["data center technician"], max_pages: 1, page_size: 5,
+    }] },
+  })).toThrow();
 });
 
 test("search freehire prints imported jobs for model review without submission", async () => {
@@ -77,12 +89,14 @@ test("search freehire prints imported jobs for model review without submission",
     expect(await child.exited).toBe(0);
     expect(await new Response(child.stderr).text()).toBe("");
     const stdout = await new Response(child.stdout).text();
-    expect(stdout).toContain("FreeHire discovered: 3 | raw results for model review: 3");
-    expect(stdout).toContain("Counters: searched=78 detailed=4 imported=3 skipped=1 failed=1");
+    expect(stdout).toContain("Data centre / IT operations");
+    expect(stdout).toContain("Bridge roles");
+    expect(stdout).toContain("1. Data Center Technician — Fixture DC");
+    expect(stdout).toContain("Старт: 17.08.2026 · §24 permit (no sponsorship)");
     expect(stdout).toContain("[detail] http_503 fixture-failed");
     expect(stdout).toContain("Data Center Technician — Fixture DC");
-    expect(stdout).toContain("Warehouse Operative");
-    expect(stdout).toContain("Munich Technician");
+    expect(stdout).not.toContain("Warehouse Operative");
+    expect(stdout).not.toContain("Munich Technician");
     expect(stdout).toContain("No application was submitted.");
     const db = openDatabase(join(directory, "workspace", "control-room.sqlite"));
     try { expect(db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 3 }); }
@@ -127,8 +141,9 @@ test("search freehire caps model-review output and diagnostic noise", async () =
     expect(await child.exited).toBe(0);
     expect(await new Response(child.stderr).text()).toBe("");
     const stdout = await new Response(child.stdout).text();
-    expect(stdout).toContain("FreeHire discovered: 12 | raw results for model review: 12");
-    expect(stdout.match(/Source: FreeHire/g)).toHaveLength(12);
+    expect(stdout).toContain("FreeHire datacenter discovered: 12 | raw results for model review: 12");
+    expect(stdout).toContain("FreeHire bridge discovered: 12 | raw results for model review: 12");
+    expect(stdout.match(/Source: FreeHire/g)).toHaveLength(24);
     expect(stdout).not.toContain("fixture-failed");
   } finally {
     server.stop(true);
@@ -140,7 +155,7 @@ test("search jobsuche prints imported jobs for model review without submission",
   const directory = await mkdtemp(join(tmpdir(), "career-control-room-jobsuche-cli-"));
   await cp(join(root, "workspace.example"), join(directory, "workspace"), { recursive: true });
   const job = { referenznummer: "10001-1002716922-S", beruf: "Data Center Technician", arbeitgeber: "Fixture DC", arbeitsort: { ort: "Frankfurt", land: "Deutschland" }, externeUrl: "https://jobs.example/fixture-dct" };
-  await writeFile(join(directory, "workspace", "search.yml"), `schema_version: 1\ndiscovery:\n  sources:\n    - id: jobsuche\n      enabled: true\n      mode: read_import_evaluate\n      country: DE\n      cities: [Frankfurt]\n      keywords: [data center technician]\n      max_pages: 1\n      page_size: 5\n`);
+  await writeFile(join(directory, "workspace", "search.yml"), `schema_version: 1\ndiscovery:\n  sources:\n    - id: jobsuche\n      track: datacenter\n      enabled: true\n      mode: read_import_evaluate\n      country: DE\n      cities: [Frankfurt]\n      keywords: [data center technician]\n      radius_km: 80\n      published_within_days: 14\n      working_time: [vz, snw]\n      max_pages: 1\n      page_size: 5\n`);
   const server = Bun.serve({
     port: 0,
     fetch(request) {
@@ -159,7 +174,8 @@ test("search jobsuche prints imported jobs for model review without submission",
     expect(await child.exited).toBe(0);
     expect(await new Response(child.stderr).text()).toBe("");
     const stdout = await new Response(child.stdout).text();
-    expect(stdout).toContain("Jobsuche discovered: 1 | raw results for model review: 1");
+    expect(stdout).toContain("Data centre / IT operations");
+    expect(stdout).toContain("Jobsuche datacenter discovered: 1 | raw results for model review: 1");
     expect(stdout).toContain("Counters: searched=1 detailed=1 imported=1 skipped=0 failed=0");
     expect(stdout).toContain("Data Center Technician — Fixture DC");
     expect(stdout).toContain("No application was submitted.");
@@ -193,10 +209,13 @@ test("search employers prints imported jobs for model review", async () => {
     expect(await child.exited).toBe(0);
     expect(await new Response(child.stderr).text()).toBe("");
     const stdout = await new Response(child.stdout).text();
-    expect(stdout).toContain("Employer results for model review: 3");
+    expect(stdout).toContain("Employer results for model review: 2");
     expect(stdout).toContain("Data Center Technician — maincubes");
-    expect(stdout).toContain("Warehouse Operative — maincubes");
+    expect(stdout).not.toContain("Warehouse Operative — maincubes");
     expect(stdout).not.toContain("Munich Technician — maincubes");
+    expect(stdout).toContain("Trusted official manual watchlist");
+    expect(stdout).toContain("Amadeus Fire");
+    expect(stdout).toContain("https://www.amadeus-fire.de/jobsuche");
     const db = openDatabase(join(directory, "workspace", "control-room.sqlite"));
     try { expect(db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 4 }); }
     finally { db.close(); }

@@ -14,18 +14,41 @@
           "minItems": 1,
           "items": {
             "type": "object",
-            "required": ["id", "enabled", "mode", "country", "cities", "keywords", "max_pages", "page_size"],
+            "required": ["id", "track", "enabled", "mode", "country", "cities", "keywords", "max_pages", "page_size"],
             "properties": {
               "id": { "enum": ["freehire", "jobsuche"] },
+              "track": { "enum": ["datacenter", "bridge"] },
               "enabled": { "type": "boolean" },
               "mode": { "const": "read_import_evaluate" },
               "country": { "const": "DE" },
               "cities": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "type": "string", "minLength": 1 } },
-              "keywords": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "type": "string", "minLength": 1 } },
+              "keywords": { "type": "array", "minItems": 1, "maxItems": 16, "items": { "type": "string", "minLength": 1 } },
               "max_pages": { "type": "integer", "minimum": 1, "maximum": 3 },
-              "page_size": { "type": "integer", "minimum": 1, "maximum": 25 }
+              "page_size": { "type": "integer", "minimum": 1, "maximum": 25 },
+              "radius_km": { "type": "integer", "minimum": 50, "maximum": 80 },
+              "published_within_days": { "type": "integer", "minimum": 0, "maximum": 100 },
+              "working_time": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": { "enum": ["vz", "tz", "snw", "ho", "mj"] }
+              },
+              "include_temporary_work": { "type": "boolean" }
             },
-            "additionalProperties": false
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": { "properties": { "id": { "const": "jobsuche" } } },
+                "then": {
+                  "properties": {
+                    "radius_km": true,
+                    "published_within_days": true,
+                    "working_time": true
+                  },
+                  "required": ["radius_km", "published_within_days", "working_time"]
+                }
+              }
+            ]
           }
         }
       },

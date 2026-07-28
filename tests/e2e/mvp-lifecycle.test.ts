@@ -157,9 +157,11 @@ test("proves the isolated synthetic import-to-shortlist lifecycle through public
 
     const report = (await cli(directory, "report", "daily")).stdout;
     expect(report).toContain("Imported today: 1 | Evaluated today: 1 | Application updates today: 1");
-    expect(report).toContain("Tracked applications: 1 | Statuses: shortlisted=1 | Best matches shown: 1");
+    expect(report).toContain("Tracked applications: 1 | Statuses: shortlisted=1 | Model-review items shown: 1");
+    expect(report).toContain("## Model review queue");
+    expect(report).not.toContain("fit ");
     expect(report).toContain("## Next actions");
-    expect(report).toContain("Review the top shortlist and verify shift, salary, and workplace details.");
+    expect(report).toContain("Review the model queue and verify shift, salary, and workplace details.");
 
     const capabilities = outputJson<{ configured_mode: string; effective_mode: string }>(await cli(directory, "capabilities"));
     expect(capabilities).toMatchObject({ configured_mode: "supervised_auto", effective_mode: "prepare_only" });

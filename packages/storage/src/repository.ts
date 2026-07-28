@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { Database } from "bun:sqlite";
+import { canonicalHttpUrl } from "../../core/src/canonical-url";
 import type { EvaluationResult, EvidenceMapping, Gate } from "../../jobs/src/types";
 
 export interface ProvenanceSnapshot {
@@ -170,21 +171,6 @@ function requireIsoTimestamp(value: string, label: string): void {
   if (Number.isNaN(Date.parse(value)) || new Date(value).toISOString() !== value) throw new Error(`${label} must be an ISO timestamp`);
 }
 
-function normalizeCanonicalUrl(value: string): string | null {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return null;
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-  url.protocol = url.protocol.toLowerCase();
-  url.hostname = url.hostname.toLowerCase();
-  url.hash = "";
-  if (url.pathname.length > 1) url.pathname = url.pathname.replace(/\/+$/, "");
-  return url.toString();
-}
-
 export class StorageRepository {
   constructor(private readonly db: Database, private readonly workspaceRoot?: string) {}
 
@@ -270,7 +256,7 @@ export class StorageRepository {
     requireHash(input.rawHash, "observation.rawHash");
     const observedAt = input.observedAt ?? now();
     requireIsoTimestamp(observedAt, "observation.observedAt");
-    const canonicalUrl = input.canonicalUrl ? normalizeCanonicalUrl(input.canonicalUrl) : null;
+    const canonicalUrl = input.canonicalUrl ? canonicalHttpUrl(input.canonicalUrl) : null;
     if (input.stableSourceId !== undefined) requireValue(input.stableSourceId, "observation.stableSourceId");
     if (input.matchedJobId !== undefined) requireValue(input.matchedJobId, "observation.matchedJobId");
     const stableKey = canonicalUrl ?? (input.stableSourceId ? `source-id:${input.stableSourceId}` : input.rawHash);

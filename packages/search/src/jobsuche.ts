@@ -1,25 +1,30 @@
 import { Buffer } from "node:buffer";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { WorkspaceSnapshot } from "../../core/src/types";
 import { buildEvaluationInput, evaluateVacancy } from "../../jobs/src/evaluate";
 import { extractVacancy } from "../../jobs/src/extract";
 import { importVacancy } from "../../jobs/src/import";
 import type { StoredJob, StoredJobSource, StorageRepository } from "../../storage/src/repository";
 import {
+  assertReadableGermanSource,
+  createDiscoveryLoopState,
   diagnosticFromError,
   discoveryRunIdentity,
+  discoveryScopeSummary,
   discoveryStatus,
   fetchWithRetry,
-  locationActionability,
   mapBounded,
+  normalizedDiscoveryScope,
   parseJson,
   prioritizeByLocation,
   ReadFailure,
-  roundRobinScopes,
 } from "./scheduler";
-import { emptyCounters, type DiscoveredJob, type DiscoveryBatch, type DiscoveryOptions, type SourceDiagnostic } from "./types";
+import { emptyCounters, evaluationNeedsReview, type DiscoveredJob, type DiscoveryBatch, type DiscoveryOptions, type SearchTrack, type SourceDiagnostic } from "./types";
 
 export type JobsucheSourceConfig = {
   id: "jobsuche";
+  track: SearchTrack;
   enabled: boolean;
   mode: "read_import_evaluate";
   country: "DE";
@@ -27,6 +32,10 @@ export type JobsucheSourceConfig = {
   keywords: string[];
   max_pages: number;
   page_size: number;
+  radius_km: number;
+  published_within_days: number;
+  working_time: Array<"vz" | "tz" | "snw" | "ho" | "mj">;
+  include_temporary_work?: boolean;
 };
 
 type JobsucheSearchJob = {
@@ -64,12 +73,19 @@ type JobsucheDetail = {
   arbeitszeitSchichtNachtWochenende?: boolean;
 };
 
-type JobsucheSearchResponse = { stellenangebote?: unknown[]; ergebnisliste?: unknown[] };
+type JobsucheSearchResponse = { stellenangebote?: unknown[]; ergebnisliste?: unknown[]; maxErgebnisse?: number };
 
 const JOBSUCHE_BASE_URL = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service";
 const JOBSUCHE_API_KEY = "jobboerse-jobsuche";
 const MAX_DISCOVERY_RESULTS = 50;
 const CONCURRENCY = 5;
+const extractionRules = JSON.parse(
+  readFileSync(join(import.meta.dir, "../../../config/extraction-rules.json"), "utf8"),
+) as { jobsuche_skill_rules?: Array<{ id: string; pattern: string; value: string }> };
+const jobsucheSkillRules = (extractionRules.jobsuche_skill_rules ?? []).map((rule) => ({
+  ...rule,
+  regex: new RegExp(rule.pattern, "iu"),
+}));
 
 async function readJson<T>(url: string, options: DiscoveryOptions, label: string): Promise<T> {
   const response = await fetchWithRetry(url, { headers: { Accept: "application/json", "X-API-Key": JOBSUCHE_API_KEY } }, options);
@@ -105,8 +121,19 @@ function searchRecord(value: unknown): JobsucheSearchJob | null {
   return referenceNumber(job)?.trim() ? job : null;
 }
 
-function searchUrl(keyword: string, city: string, page: number, pageSize: number): string {
-  const params = new URLSearchParams({ was: keyword, wo: city, page: String(page), size: String(pageSize) });
+function searchUrl(source: JobsucheSourceConfig, keyword: string, city: string, page: number): string {
+  const params = new URLSearchParams({
+    was: keyword,
+    wo: city,
+    page: String(page),
+    size: String(source.page_size),
+    umkreis: String(source.radius_km),
+    veroeffentlichtseit: String(source.published_within_days),
+    arbeitszeit: source.working_time.join(";"),
+  });
+  if (source.include_temporary_work !== undefined) {
+    params.set("zeitarbeit", String(source.include_temporary_work));
+  }
   return `${JOBSUCHE_BASE_URL}/pc/v6/jobs?${params.toString()}`;
 }
 
@@ -130,15 +157,7 @@ function realLocations(rows: Array<{ adresse?: JobsucheLocation }> | undefined):
 }
 
 function skillsFromDescription(description: string): string[] {
-  const rules: Array<[RegExp, string]> = [
-    [/\b(?:pc |computer\/)?hardware\b|komponenten/i, "PC hardware"],
-    [/\bservers?\b|serverhardware/i, "server hardware"],
-    [/network|netzwerk|routers?|switches?/i, "networking"],
-    [/cabling|verkabelung|kabelmanagement/i, "cabling"],
-    [/troubleshoot|hardware replacement|repair|fehlersuche|reparatur|instandhaltung/i, "hardware troubleshooting"],
-    [/\blinux\b/i, "Linux"],
-  ];
-  return rules.flatMap(([pattern, skill]) => pattern.test(description) ? [skill] : []);
+  return jobsucheSkillRules.flatMap((rule) => rule.regex.test(description) ? [rule.value] : []);
 }
 
 function shiftRequirement(description: string, detail: JobsucheDetail): string {
@@ -176,6 +195,7 @@ function canonicalText(detail: JobsucheDetail, summary: JobsucheSearchJob, refnr
 function searchListings(value: JobsucheSearchResponse): unknown[] {
   if (!value || typeof value !== "object") throw new ReadFailure("Jobsuche returned an invalid search envelope", "invalid_envelope", false);
   const listings = value.ergebnisliste ?? value.stellenangebote;
+  if (listings === undefined && value.maxErgebnisse === 0) return [];
   if (!Array.isArray(listings)) throw new ReadFailure("Jobsuche returned an invalid search envelope", "invalid_envelope", false);
   return listings;
 }
@@ -198,36 +218,30 @@ function detailRecord(value: unknown): JobsucheDetail {
   return detail as JobsucheDetail;
 }
 
-function normalizedScope(source: JobsucheSourceConfig): unknown {
-  const normalized = (values: string[]) => values.map((value) => value.trim().toLowerCase());
-  return { keywords: normalized(source.keywords), cities: normalized(source.cities), country: source.country, maxPages: source.max_pages, pageSize: source.page_size };
-}
-
 export async function discoverJobsuche(
   source: JobsucheSourceConfig,
   repository: StorageRepository,
   workspace: WorkspaceSnapshot,
   options: DiscoveryOptions = {},
 ): Promise<DiscoveryBatch> {
-  if (!source.enabled) throw new Error("Jobsuche source is disabled by workspace policy");
-  if (source.mode !== "read_import_evaluate") throw new Error("Jobsuche source must use read_import_evaluate mode");
-  if (source.country !== "DE") throw new Error("Jobsuche source only supports country DE");
+  assertReadableGermanSource(source, "Jobsuche");
 
   const now = options.now ?? (() => new Date().toISOString());
   const startedAt = now();
-  const identity = discoveryRunIdentity(source.id, normalizedScope(source), startedAt);
-  const runId = repository.startDiscoveryRunAllocated({ id: identity.runId, sourceId: source.id, scopeHash: identity.scopeHash, startedAt }).id;
+  const batchSourceId = `${source.id}:${source.track}`;
+  const identity = discoveryRunIdentity(batchSourceId, normalizedDiscoveryScope(source), startedAt);
+  const runId = repository.startDiscoveryRunAllocated({ id: identity.runId, sourceId: batchSourceId, scopeHash: identity.scopeHash, startedAt }).id;
 
   const counters = emptyCounters();
   const diagnostics: SourceDiagnostic[] = [];
-  const scopes = roundRobinScopes(source.keywords, source.cities);
-  const active = scopes.map(() => true);
-  const failedScopes = new Set<number>();
-  const completedScopes = new Set<number>();
+  const loop = createDiscoveryLoopState(source.keywords, source.cities);
+  const { scopes, active, failedScopes, completedScopes } = loop;
   const seen = new Map<string, JobsucheSearchJob>();
   const rows: DiscoveredJob[] = [];
+  let truncated = false;
   let batch: DiscoveryBatch = {
-    sourceId: source.id,
+    sourceId: batchSourceId,
+    track: source.track,
     status: "failed",
     scope: { planned: scopes.length, completed: 0, failed: scopes.length },
     jobs: [],
@@ -243,7 +257,7 @@ export async function discoverJobsuche(
     for (let page = 1; page <= source.max_pages && active.some(Boolean); page += 1) {
     const pageScopes = scopes.map((scope, index) => ({ scope, index })).filter(({ index }) => active[index]);
     const settled = await mapBounded(pageScopes, CONCURRENCY, async ({ scope }) => {
-      const url = searchUrl(scope.keyword, scope.city, page, source.page_size);
+      const url = searchUrl(source, scope.keyword, scope.city, page);
       return searchListings(await readJson<JobsucheSearchResponse>(url, options, "Jobsuche"));
     });
     settled.forEach((result, resultIndex) => {
@@ -253,14 +267,14 @@ export async function discoverJobsuche(
         counters.failed += 1;
         active[index] = false;
         failedScopes.add(index);
-        diagnostics.push(diagnosticFromError(result.reason, result.reason instanceof ReadFailure && result.reason.code.startsWith("invalid_") ? "parse" : "search", searchUrl(scope.keyword, scope.city, page, source.page_size)));
+        diagnostics.push(diagnosticFromError(result.reason, result.reason instanceof ReadFailure && result.reason.code.startsWith("invalid_") ? "parse" : "search", searchUrl(source, scope.keyword, scope.city, page)));
         return;
       }
       for (const value of result.value) {
         const job = searchRecord(value);
         if (!job) {
           counters.failed += 1;
-          diagnostics.push({ stage: "parse", locator: searchUrl(scope.keyword, scope.city, page, source.page_size), code: "invalid_record", message: "Jobsuche search record has an invalid reference number or field type", transient: false });
+          diagnostics.push({ stage: "parse", locator: searchUrl(source, scope.keyword, scope.city, page), code: "invalid_record", message: "Jobsuche search record has an invalid reference number or field type", transient: false });
         } else {
           const refnr = referenceNumber(job) as string;
           if (!seen.has(refnr)) seen.set(refnr, job);
@@ -283,6 +297,14 @@ export async function discoverJobsuche(
     ([, summary]) => locationText(undefined, summary.arbeitsort ?? realLocations(summary.stellenlokationen)?.[0]),
     source.cities,
   ).slice(0, detailLimit);
+  truncated = seen.size > summaries.length;
+  if (truncated) diagnostics.push({
+    stage: "search",
+    locator: source.id,
+    code: "result_budget_truncated",
+    message: `Review budget selected ${summaries.length} of ${seen.size} discovered vacancies`,
+    transient: false,
+  });
   counters.detailed = summaries.length;
   const details = await mapBounded(summaries, CONCURRENCY, async ([refnr]) => detailRecord(await readJson<unknown>(detailUrl(refnr), options, "Jobsuche")));
   for (let index = 0; index < details.length; index += 1) {
@@ -297,7 +319,6 @@ export async function discoverJobsuche(
     const title = detail.stellenangebotsTitel ?? detail.titel ?? summary.stellenangebotsTitel ?? summary.beruf ?? summary.hauptberuf;
     if (!title) {
       counters.skipped += 1;
-      counters.failed += 1;
       diagnostics.push({ stage: "parse", locator: refnr, code: "missing_identity", message: "Jobsuche detail is missing a title", transient: false });
       continue;
     }
@@ -311,11 +332,8 @@ export async function discoverJobsuche(
         { discoveryRunId: runId, observedAt: now() },
       );
       counters.imported += 1;
-      const area = locationActionability(location, source.cities);
-      if (area === "out_of_area") {
-        counters.skipped += 1;
-        diagnostics.push({ stage: "parse", locator: stableSourceId, code: "out_of_area", message: `Location is outside configured cities: ${location}`, transient: false });
-      } else if (area === "unknown") {
+      const area = location ? "in_area" : "unknown";
+      if (area === "unknown") {
         diagnostics.push({ stage: "parse", locator: stableSourceId, code: "location_unknown", message: "Location is missing", transient: false });
       }
 
@@ -324,7 +342,7 @@ export async function discoverJobsuche(
         const stored = repository.readJob(imported.id);
         if (!stored) throw new Error(`Imported Jobsuche job is unavailable: ${imported.id}`);
         const extracted = extractVacancy((stored as StoredJobSource).rawContent);
-        evaluation = evaluateVacancy(stored as StoredJob, extracted, workspace, options.asOf ?? now().slice(0, 10));
+        evaluation = evaluateVacancy(stored as StoredJob, extracted, workspace, options.asOf ?? now().slice(0, 10), { track: source.track });
         repository.persistEvaluation(buildEvaluationInput(evaluation, extracted, workspace));
       }
       rows.push({
@@ -338,7 +356,9 @@ export async function discoverJobsuche(
         location,
         logicalVacancyId: imported.logicalVacancyId,
         version: imported.version,
-        actionable: area !== "out_of_area",
+        track: source.track,
+        actionable: true,
+        needs_review: evaluationNeedsReview(evaluation),
         evaluation,
       });
     } catch (error) {
@@ -347,14 +367,14 @@ export async function discoverJobsuche(
     }
   }
 
-    const status = discoveryStatus(counters);
-    const scope = { planned: scopes.length, completed: completedScopes.size, failed: failedScopes.size };
-    batch = { sourceId: source.id, status, scope, jobs: rows, counters, diagnostics };
+    const status = discoveryStatus(counters, truncated);
+    const scope = discoveryScopeSummary(loop);
+    batch = { sourceId: batchSourceId, track: source.track, status, scope, jobs: rows, counters, diagnostics };
   } catch (error) {
     counters.failed += 1;
     diagnostics.push({ stage: "parse", locator: source.id, code: "connector_exception", message: error instanceof Error ? error.message : String(error), transient: false });
-    const status = discoveryStatus(counters);
-    batch = { sourceId: source.id, status, scope: { planned: scopes.length, completed: completedScopes.size, failed: failedScopes.size }, jobs: [...rows], counters, diagnostics };
+    const status = discoveryStatus(counters, truncated);
+    batch = { sourceId: batchSourceId, track: source.track, status, scope: discoveryScopeSummary(loop), jobs: [...rows], counters, diagnostics };
   } finally {
     repository.finishDiscoveryRun(runId, { status: batch.status, counters, diagnostics, finishedAt: now() });
   }

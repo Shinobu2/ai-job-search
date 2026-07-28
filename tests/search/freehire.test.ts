@@ -19,7 +19,7 @@ const workspace = {
 };
 
 const source: FreehireSourceConfig = {
-  id: "freehire", enabled: true, mode: "read_import_evaluate" as const, country: "DE",
+  id: "freehire", track: "datacenter", enabled: true, mode: "read_import_evaluate" as const, country: "DE",
   cities: ["Frankfurt", "Eschborn"], keywords: ["data center technician"], max_pages: 1, page_size: 5,
 };
 
@@ -75,9 +75,11 @@ test("FreeHire discovery bounds configured reads, preserves public identity, and
 
     expect(requested.filter((url) => url.includes("/search?")).length).toBe(4);
     expect(requested.filter((url) => url.includes("/search?")).every((url) => url.includes("countries=DE"))).toBe(true);
+    expect(requested.filter((url) => url.includes("/search?")).every((url) => url.includes("semantic_ratio=0.5"))).toBe(true);
     expect(requested.find((url) => url.includes("/search?"))).toContain("cities=Frankfurt");
     expect(first.jobs).toHaveLength(2);
-    expect(first.jobs[0]).toMatchObject({ sourceId: "freehire:northstar-dct", stableSourceId: "freehire:northstar-dct", sourceUrl: "https://jobs.example/northstar-dct", reused: false, title: "Data Center Technician", actionable: true, logicalVacancyId: expect.stringContaining("vacancy_"), version: 1 });
+    expect(first).toMatchObject({ sourceId: "freehire:datacenter", track: "datacenter" });
+    expect(first.jobs[0]).toMatchObject({ sourceId: "freehire:northstar-dct", stableSourceId: "freehire:northstar-dct", sourceUrl: "https://jobs.example/northstar-dct", reused: false, title: "Data Center Technician", track: "datacenter", actionable: true, needs_review: true, logicalVacancyId: expect.stringContaining("vacancy_"), version: 1 });
     expect(second.jobs.every((result) => result.reused)).toBe(true);
     expect(first.status).toBe("success");
     expect(first.scope).toEqual({ planned: 2, completed: 2, failed: 0 });
@@ -109,8 +111,8 @@ test("FreeHire discovery uses the fixed HTTPS endpoint and refuses redirects", a
     await discoverFreehire(source, new StorageRepository(db), workspace as never, { asOf: "2026-07-12" });
 
     expect(requested).toEqual([
-      { url: "https://freehire.dev/api/v1/jobs/search?q=data+center+technician&limit=5&offset=0&semantic_ratio=0&countries=DE&cities=Frankfurt", redirect: "error" },
-      { url: "https://freehire.dev/api/v1/jobs/search?q=data+center+technician&limit=5&offset=0&semantic_ratio=0&countries=DE&cities=Eschborn", redirect: "error" },
+      { url: "https://freehire.dev/api/v1/jobs/search?q=data+center+technician&limit=5&offset=0&semantic_ratio=0.5&countries=DE&cities=Frankfurt", redirect: "error" },
+      { url: "https://freehire.dev/api/v1/jobs/search?q=data+center+technician&limit=5&offset=0&semantic_ratio=0.5&countries=DE&cities=Eschborn", redirect: "error" },
     ]);
   } finally {
     globalThis.fetch = originalFetch;
@@ -163,6 +165,44 @@ test("FreeHire discovery deduplicates public slugs across keyword queries and pa
       "freehire:network-two",
       "freehire:shared",
     ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    db.close();
+  }
+});
+
+test("FreeHire collapses confirmed source aliases but preserves different requisitions", async () => {
+  const db = openDatabase(":memory:");
+  migrate(db);
+  const originalFetch = globalThis.fetch;
+  const sharedSikaUrl = "https://jobs.smartrecruiters.com/SikaAG/744000132370623-produktionsmitarbeiter-m-w-d-";
+  const fixtures = {
+    "sika-one": { ...freehireJob("sika-one"), title: "Produktionsmitarbeiter (m/w/d)", company: "Sika Group", company_slug: "SikaAG", external_id: "SikaAG:744000132370623", url: `${sharedSikaUrl}?utm_source=freehire.me` },
+    "sika-two": { ...freehireJob("sika-two"), title: "Produktionsmitarbeiter (m/w/d)", company: "sikaag", company_slug: "sikaag", external_id: "sikaag:744000132370623", url: sharedSikaUrl },
+    "ecolab-phenom": { ...freehireJob("ecolab-phenom"), title: "Servicetechniker Rechenzentrum", company: "Ecolab", company_slug: "ecolab", external_id: "phenom:293997", url: "https://jobs.ecolab.com/global/en/job/EIYEIEUSR00293997EXTERNALENGLOBAL" },
+    "ecolab-workday": { ...freehireJob("ecolab-workday"), title: "Servicetechniker Rechenzentrum", company: "ecolab", company_slug: "ecolab", external_id: "workday:R00293997", url: "https://ecolab.wd1.myworkdayjobs.com/Ecolab_External/job/Frankfurt/Technician_R00293997" },
+    "ecolab-other": { ...freehireJob("ecolab-other"), title: "Servicetechniker Rechenzentrum", company: "Ecolab", company_slug: "ecolab", external_id: "workday:R00999999", url: "https://ecolab.wd1.myworkdayjobs.com/Ecolab_External/job/Frankfurt/Technician_R00999999" },
+  };
+  globalThis.fetch = (async (input: string | URL) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith("/search")) return response({ data: Object.values(fixtures) });
+    const slug = url.pathname.split("/").at(-1) as keyof typeof fixtures;
+    return response({ data: fixtures[slug] });
+  }) as typeof fetch;
+  try {
+    const results = await discoverFreehire(
+      { ...source, cities: ["Frankfurt"], page_size: 5 },
+      new StorageRepository(db),
+      workspace as never,
+      { asOf: "2026-07-12" },
+    );
+    expect(results.jobs.map((job) => job.sourceId)).toEqual([
+      "freehire:sika-one",
+      "freehire:ecolab-phenom",
+      "freehire:ecolab-other",
+    ]);
+    expect(results.counters).toEqual({ searched: 1, detailed: 5, imported: 3, skipped: 2, failed: 0 });
+    expect(results.diagnostics.filter((item) => item.code === "duplicate_source_listing")).toHaveLength(2);
   } finally {
     globalThis.fetch = originalFetch;
     db.close();

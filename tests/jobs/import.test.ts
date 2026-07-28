@@ -224,6 +224,29 @@ test("canonical URL takes precedence over stable source ID for logical vacancy i
   }
 });
 
+test("canonical URL dedupe ignores common tracking parameters and fragments", async () => {
+  const fixture = await repository();
+  try {
+    const first = await importVacancy({
+      text: vacancy,
+      sourceUrl: "https://Example.test/jobs/42/?utm_source=freehire.dev&utm_medium=aggregator#apply",
+    }, fixture.repository);
+    const changed = await importVacancy({
+      text: `${vacancy}\nSkills: Networking`,
+      sourceUrl: "https://example.test/jobs/42",
+    }, fixture.repository);
+
+    expect(changed).toMatchObject({ logicalVacancyId: first.logicalVacancyId, version: 2 });
+    expect(fixture.db.query("SELECT stable_key, canonical_url FROM logical_vacancies").get()).toEqual({
+      stable_key: "https://example.test/jobs/42",
+      canonical_url: "https://example.test/jobs/42",
+    });
+  } finally {
+    fixture.db.close();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
 test("deduplicates different provider IDs when identity and content match", async () => {
   const fixture = await repository();
   try {

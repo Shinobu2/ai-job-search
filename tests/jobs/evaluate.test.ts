@@ -145,6 +145,25 @@ test("compares an explicit German net monthly salary without inventing tax assum
   expect(result.gates).toContainEqual(expect.objectContaining({ id: "salary", status: "PASS" }));
 });
 
+test("marks pay below the target as emergency-only when the verified floor is last-resort", () => {
+  const extracted = extractVacancy("# Hardware Technician\nSalary: 1.850,00 € netto/Monat\n");
+  const result = evaluateVacancy({ id: "last_resort_salary", title: null, company: null, location: null }, extracted, {
+    ...workspace,
+    profile: {
+      ...(workspace.profile as object),
+      compensation: {
+        net_monthly_estimate: {
+          value: { floor_eur: 1850, target_eur: 2500, floor_policy: "last_resort_only_if_no_better_options" },
+          verification_status: "user_confirmed",
+          provenance: [{ source_type: "user_statement", source_ref: "test" }],
+        },
+      },
+    },
+  }, "2026-07-12");
+
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "salary", status: "EMERGENCY_ONLY" }));
+});
+
 test("ignores rejected, expired, and unknown profile values when evaluating gates", async () => {
   const text = await readFile(join(fixtureDirectory, "own-car.md"), "utf8");
   const extracted = extractVacancy(text);
@@ -397,13 +416,43 @@ test("blocks prolonged standing for data-centre roles with the verified constrai
 });
 
 test("bridge roles block only combined continuous heavy work and prolonged standing", async () => {
-  const standingOnly = await evaluateText("# Production Operator\nPhysical: Prolonged standing required\n");
-  const moderate = await evaluateText("# Production Operator\nPhysical: Light to moderate physical work with occasional carrying\n");
-  const combined = await evaluateText("# Production Operator\nPhysical: Continuous heavy lifting and prolonged standing required throughout the shift\n");
+  const standingOnly = await evaluateText("# Production Operator\nPhysical: Prolonged standing required\n", "bridge");
+  const moderate = await evaluateText("# Production Operator\nPhysical: Light to moderate physical work with occasional carrying\n", "bridge");
+  const combined = await evaluateText("# Production Operator\nPhysical: Continuous heavy lifting and prolonged standing required throughout the shift\n", "bridge");
 
   expect(standingOnly.gates.find((gate) => gate.id === "physical")?.status).not.toBe("BLOCKED");
   expect(moderate.gates.find((gate) => gate.id === "physical")?.status).not.toBe("BLOCKED");
   expect(combined.gates).toContainEqual(expect.objectContaining({ id: "physical", status: "BLOCKED" }));
+});
+
+test("bridge track stays bridge for classified Warehouse IT and electronics roles", async () => {
+  const result = await evaluateText(
+    "# Desktop Support Technician\nSkills: Warehouse IT scanner operations and electronics assembly\nPhysical: Light to moderate physical work with occasional carrying\n",
+    "bridge",
+  );
+
+  expect(result.archetype).not.toBe("REVIEW");
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "physical", status: "PASS_WITH_RISK" }));
+  expect(result.gates.find((gate) => gate.id === "scope")?.status).not.toBe("BLOCKED");
+  expect(result.gates.find((gate) => gate.id === "facilities")?.status).not.toBe("BLOCKED");
+});
+
+test("bridge electronics work does not waive high-voltage qualification gates", async () => {
+  const result = await evaluateText(
+    "# Electronics Assembly Technician\nSkills: Electronics assembly and high-voltage switching\nPhysical: Light physical work\n",
+    "bridge",
+  );
+  expect(result.gates).toContainEqual(expect.objectContaining({ id: "facilities", status: "BLOCKED" }));
+});
+
+test("blocks mandatory German senior-experience formats", async () => {
+  for (const text of [
+    "# IT Operations Technician\nExperience: 3+ Jahre Berufserfahrung erforderlich\n",
+    "# IT Operations Technician\nExperience: Berufserfahrung von mindestens 4 Jahren vorausgesetzt\n",
+  ]) {
+    const result = await evaluateText(text);
+    expect(result.gates).toContainEqual(expect.objectContaining({ id: "experience", status: "BLOCKED" }));
+  }
 });
 
 test("blocks repeated heavy lifting even without 'continuous heavy work' phrasing", async () => {
@@ -643,7 +692,13 @@ test("builds a persistence graph with config provenance, run-scoped requirement 
   expect(input.recommendations).toHaveLength(1);
 });
 
-async function evaluateText(text: string) {
+async function evaluateText(text: string, track: "datacenter" | "bridge" = "datacenter") {
   const extracted = extractVacancy(text);
-  return evaluateVacancy({ id: "inline", title: extracted.fields.title.value, company: null, location: null }, extracted, workspace, "2026-07-12");
+  return evaluateVacancy(
+    { id: "inline", title: extracted.fields.title.value, company: null, location: null },
+    extracted,
+    workspace,
+    "2026-07-12",
+    { track },
+  );
 }

@@ -4,7 +4,7 @@ import { migrate } from "../../packages/storage/src/migrate";
 import { StorageRepository } from "../../packages/storage/src/repository";
 import { discoverPersonioEmployer, parsePersonioXml, readPersonioEmployer } from "../../packages/search/src/personio";
 
-const employer = { id: "maincubes", name: "maincubes", cities: ["Frankfurt am Main"], career_url: "https://maincubes-1.jobs.personio.de/?language=de", ats: "personio", policy: "public_ats_endpoint" as const, enabled: true };
+const employer = { id: "maincubes", name: "maincubes", track: "datacenter" as const, cities: ["Frankfurt am Main"], career_url: "https://maincubes-1.jobs.personio.de/?language=de", ats: "personio", policy: "public_ats_endpoint" as const, enabled: true };
 const workspace = {
   profile: {
     constraints: { night_shifts: { value: "unknown", verification_status: "unknown", provenance: [] }, continuous_heavy_work: { value: "unknown", verification_status: "unknown", provenance: [] } },
@@ -76,7 +76,29 @@ test("Personio reader uses only approved registry endpoints and performs GET-onl
   expect(requested).toEqual(["https://maincubes-1.jobs.personio.de/xml?language=en"]);
   expect(batch.jobs[0]?.id).toBe("42");
   expect(batch.counters).toEqual({ searched: 1, detailed: 1, imported: 0, skipped: 0, failed: 0 });
-  await expect(readPersonioEmployer({ id: "manual", name: "Manual", cities: [], career_url: "https://example.com/jobs", ats: "unknown", policy: "manual_only", enabled: true })).rejects.toThrow("not approved");
+  await expect(readPersonioEmployer({ id: "manual", name: "Manual", track: "datacenter", cities: [], career_url: "https://example.com/jobs", ats: "unknown", policy: "manual_only", enabled: true })).rejects.toThrow("not approved");
+});
+
+test("Personio reader fills missing English descriptions from an approved German feed", async () => {
+  const requested: string[] = [];
+  const batch = await readPersonioEmployer(
+    { ...employer, content_language_fallback: "de" },
+    (async (input) => {
+      const url = String(input);
+      requested.push(url);
+      const description = url.includes("language=de")
+        ? "<jobDescriptions><jobDescription><value>Vollständige Hardware-Beschreibung</value></jobDescription></jobDescriptions>"
+        : "";
+      return new Response(`<workzag-jobs><position><id>42</id><name>Technician</name><office>Frankfurt</office>${description}</position></workzag-jobs>`, { status: 200 });
+    }) as typeof fetch,
+  );
+
+  expect(requested).toEqual([
+    "https://maincubes-1.jobs.personio.de/xml?language=en",
+    "https://maincubes-1.jobs.personio.de/xml?language=de",
+  ]);
+  expect(batch.jobs[0]?.description).toBe("Vollständige Hardware-Beschreibung");
+  expect(batch.counters.searched).toBe(2);
 });
 
 test("Personio reader retries transient failures twice and translates malformed XML into diagnostics", async () => {

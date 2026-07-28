@@ -5,7 +5,7 @@ import { importVacancy } from "../../jobs/src/import";
 import type { StoredJob, StoredJobSource, StorageRepository } from "../../storage/src/repository";
 import type { EmployerRegistryEntry } from "./employer-registry";
 import { diagnosticFromError, discoveryRunIdentity, discoveryStatus, fetchWithRetry, locationActionability, prioritizeByLocation, ReadFailure } from "./scheduler";
-import { emptyCounters, type DiscoveryBatch, type DiscoveryCounters, type DiscoveryOptions, type DiscoveryScopeSummary, type DiscoveryStatus, type SourceDiagnostic } from "./types";
+import { emptyCounters, evaluationNeedsReview, type DiscoveryBatch, type DiscoveryCounters, type DiscoveryOptions, type DiscoveryScopeSummary, type DiscoveryStatus, type SourceDiagnostic } from "./types";
 
 export type PersonioJob = { id: string; title: string; location: string | null; locations: string[]; description: string };
 export type PersonioReadBatch = {
@@ -154,13 +154,13 @@ export function parsePersonioXml(xml: string): PersonioJob[] {
   });
 }
 
-function endpointFor(employer: EmployerRegistryEntry): URL {
+function endpointFor(employer: EmployerRegistryEntry, language: "en" | "de" = "en"): URL {
   if (!employer.enabled || employer.policy !== "public_ats_endpoint" || employer.ats !== "personio") throw new Error(`Employer ${employer.id} is not approved for Personio reads`);
   const career = new URL(employer.career_url);
   if (career.protocol !== "https:" || ![".jobs.personio.com", ".jobs.personio.de"].some((suffix) => career.hostname.endsWith(suffix))) {
     throw new Error(`Employer ${employer.id} has an invalid Personio endpoint`);
   }
-  return new URL("/xml?language=en", career.origin);
+  return new URL(`/xml?language=${language}`, career.origin);
 }
 
 export async function readPersonioEmployer(
@@ -170,6 +170,7 @@ export async function readPersonioEmployer(
 ): Promise<PersonioReadBatch> {
   const endpoint = endpointFor(employer);
   const counters = emptyCounters();
+  const diagnostics: SourceDiagnostic[] = [];
   counters.searched = 1;
   try {
     const response = await fetchWithRetry(endpoint, { headers: { Accept: "application/xml" } }, options, fetcher);
@@ -179,8 +180,22 @@ export async function readPersonioEmployer(
     } catch (error) {
       throw new ReadFailure(error instanceof Error ? error.message : String(error), "invalid_xml", false);
     }
+    if (employer.content_language_fallback === "de" && jobs.some((job) => !job.description)) {
+      const fallbackEndpoint = endpointFor(employer, "de");
+      counters.searched += 1;
+      try {
+        const fallbackResponse = await fetchWithRetry(fallbackEndpoint, { headers: { Accept: "application/xml" } }, options, fetcher);
+        const fallbackJobs = parsePersonioXml(await fallbackResponse.text());
+        const descriptions = new Map(fallbackJobs.map((job) => [job.id, job.description]));
+        jobs = jobs.map((job) => job.description ? job : { ...job, description: descriptions.get(job.id) ?? "" });
+      } catch (error) {
+        counters.failed += 1;
+        diagnostics.push(diagnosticFromError(error, error instanceof ReadFailure ? "parse" : "search", `${employer.id}:de`));
+      }
+    }
     counters.detailed = jobs.length;
-    return { sourceId: `personio:${employer.id}`, status: "success", scope: { planned: 1, completed: 1, failed: 0 }, jobs, counters, diagnostics: [] };
+    const status = discoveryStatus(counters);
+    return { sourceId: `personio:${employer.id}`, status, scope: { planned: 1, completed: 1, failed: 0 }, jobs, counters, diagnostics };
   } catch (error) {
     counters.failed = 1;
     const parseFailure = error instanceof ReadFailure && error.code === "invalid_xml";
@@ -218,7 +233,8 @@ export async function discoverPersonioEmployer(
   const diagnostics: SourceDiagnostic[] = [];
   const rows: DiscoveryBatch["jobs"] = [];
   let scope: DiscoveryScopeSummary = { planned: 1, completed: 0, failed: 1 };
-  let batch: DiscoveryBatch = { sourceId, status: "failed", scope, jobs: [], counters, diagnostics };
+  let batch: DiscoveryBatch = { sourceId, track: employer.track, status: "failed", scope, jobs: [], counters, diagnostics };
+  let truncated = false;
 
   try {
     const read = await readPersonioEmployer(employer, options.fetcher ?? fetch, options);
@@ -231,6 +247,8 @@ export async function discoverPersonioEmployer(
       (job) => job.locations.join(", ") || null,
       employer.cities,
     ).slice(0, limit);
+    truncated = read.jobs.length > selected.length;
+    if (truncated) diagnostics.push({ stage: "search", locator: employer.id, code: "result_budget_truncated", message: `Review budget selected ${selected.length} of ${read.jobs.length} vacancies`, transient: false });
     counters.skipped += Math.max(0, read.jobs.length - selected.length);
 
     for (const job of selected) {
@@ -256,7 +274,7 @@ export async function discoverPersonioEmployer(
         const stored = repository.readJob(imported.id);
         if (!stored) throw new Error(`Imported Personio job is unavailable: ${imported.id}`);
         const extracted = extractVacancy((stored as StoredJobSource).rawContent);
-        evaluation = evaluateVacancy(stored as StoredJob, extracted, workspace, options.asOf ?? now().slice(0, 10));
+        evaluation = evaluateVacancy(stored as StoredJob, extracted, workspace, options.asOf ?? now().slice(0, 10), { track: employer.track });
         repository.persistEvaluation(buildEvaluationInput(evaluation, extracted, workspace));
       }
       rows.push({
@@ -270,7 +288,9 @@ export async function discoverPersonioEmployer(
         location: job.location,
         logicalVacancyId: imported.logicalVacancyId,
         version: imported.version,
+        track: employer.track,
         actionable: area !== "out_of_area",
+        needs_review: evaluationNeedsReview(evaluation),
         evaluation,
       });
     } catch (error) {
@@ -279,13 +299,13 @@ export async function discoverPersonioEmployer(
     }
     }
 
-    const status = discoveryStatus(counters);
-    batch = { sourceId, status, scope, jobs: rows, counters, diagnostics };
+    const status = discoveryStatus(counters, truncated);
+    batch = { sourceId, track: employer.track, status, scope, jobs: rows, counters, diagnostics };
   } catch (error) {
     counters.failed += 1;
     diagnostics.push({ stage: "parse", locator: sourceId, code: "connector_exception", message: error instanceof Error ? error.message : String(error), transient: false });
-    const status = discoveryStatus(counters);
-    batch = { sourceId, status, scope, jobs: rows, counters, diagnostics };
+    const status = discoveryStatus(counters, truncated);
+    batch = { sourceId, track: employer.track, status, scope, jobs: rows, counters, diagnostics };
   } finally {
     repository.finishDiscoveryRun(runId, { status: batch.status, counters, diagnostics, finishedAt: now() });
   }

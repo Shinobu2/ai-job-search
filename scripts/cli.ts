@@ -22,7 +22,7 @@ import { loadEmployerRegistry } from "../packages/search/src/employer-registry";
 import { discoverPersonioEmployer } from "../packages/search/src/personio";
 import { discoverGreenhouseEmployer } from "../packages/search/src/greenhouse";
 import { discoverLeverEmployer } from "../packages/search/src/lever";
-import { type DiscoveryCounters, type SourceDiagnostic } from "../packages/search/src/types";
+import { isActionableDiscoveryJob, type DiscoveryCounters, type SearchTrack, type SourceDiagnostic } from "../packages/search/src/types";
 import { generateDocumentPacket, hashEvidenceSnapshot } from "../packages/documents/src/generate";
 import { buildAtsDocx, lintAtsDocx } from "../packages/documents/src/ats-docx";
 
@@ -130,39 +130,69 @@ async function runJob(root: string, command: string | undefined, arguments_: str
 
 async function runSearch(root: string, sourceName: string | undefined, arguments_: string[]): Promise<void> {
   if (!sourceName || arguments_.length > 0 || !["freehire", "jobsuche", "ba", "employers"].includes(sourceName)) throw new Error("Usage: search <freehire|jobsuche|ba|employers>");
+  const tracks: SearchTrack[] = ["datacenter", "bridge"];
+  const trackLabel = (track: SearchTrack) => track === "datacenter" ? "Data centre / IT operations" : "Bridge roles";
+  const printJob = (job: {
+    title: string; company: string | null; location: string | null; sourceId: string; sourceUrl: string;
+    reused: boolean; needs_review: boolean;
+  }, index: number, sourceLabel: string) => {
+    console.log(`${index}. ${job.title} — ${job.company}`);
+    console.log(`Location: ${job.location ?? "unknown"}`);
+    console.log("Старт: 17.08.2026 · §24 permit (no sponsorship)");
+    console.log(`Review: ${job.needs_review ? "required" : "ready"}`);
+    console.log(`Source: ${sourceLabel} ${job.sourceId} — ${job.sourceUrl}`);
+    console.log(`Import: ${job.reused ? "reused" : "created"}\n`);
+  };
   if (sourceName === "employers") {
     const registry = await loadEmployerRegistry();
     const { db, repository } = openRepository(root);
     try {
-      let count = 0;
-      let processed = 0;
-      for (const employer of registry.employers.filter((entry) => entry.enabled && entry.policy === "public_ats_endpoint" && ["personio", "greenhouse", "lever"].includes(entry.ats))) {
-        try {
-          const workspace = await loadWorkspace(root);
-          const discoveryEmployer = { ...employer, cities: registry.cities };
-          const batch = employer.ats === "greenhouse"
-            ? await discoverGreenhouseEmployer(discoveryEmployer, repository, workspace, { maxResults: MODEL_REVIEW_LIMIT - processed })
-            : employer.ats === "lever"
-              ? await discoverLeverEmployer(discoveryEmployer, repository, workspace, { maxResults: MODEL_REVIEW_LIMIT - processed })
-              : await discoverPersonioEmployer(discoveryEmployer, repository, workspace, { maxResults: MODEL_REVIEW_LIMIT - processed });
-          const atsLabel = employer.ats === "greenhouse" ? "Greenhouse" : employer.ats === "lever" ? "Lever" : "Personio";
-          const reviewJobs = batch.jobs.filter((job) => job.actionable);
-          processed += reviewJobs.length;
-          printDiscoveryDiagnostics(`${atsLabel} ${employer.id}`, batch.counters, batch.diagnostics);
-          for (const job of reviewJobs) {
-            console.log(`${job.title} — ${job.company}`);
-            console.log(`Location: ${job.location ?? "unknown"}`);
-            console.log(`Source: ${atsLabel} ${job.sourceId} — ${job.sourceUrl}`);
-            console.log(`Import: ${job.reused ? "reused" : "created"}\n`);
-            count += 1;
+      let total = 0;
+      for (const track of tracks) {
+        console.log(`\n${trackLabel(track)}`);
+        let index = 1;
+        let processed = 0;
+        const employers = registry.employers.filter((entry) =>
+          entry.track === track
+          && entry.enabled
+          && entry.policy === "public_ats_endpoint"
+          && ["personio", "greenhouse", "lever"].includes(entry.ats));
+        for (const employer of employers) {
+          try {
+            const workspace = await loadWorkspace(root);
+            const discoveryEmployer = { ...employer, cities: registry.cities };
+            const sourceBudget = Math.min(4, MODEL_REVIEW_LIMIT - processed);
+            const batch = employer.ats === "greenhouse"
+              ? await discoverGreenhouseEmployer(discoveryEmployer, repository, workspace, { maxResults: sourceBudget })
+              : employer.ats === "lever"
+                ? await discoverLeverEmployer(discoveryEmployer, repository, workspace, { maxResults: sourceBudget })
+                : await discoverPersonioEmployer(discoveryEmployer, repository, workspace, { maxResults: sourceBudget });
+            const atsLabel = employer.ats === "greenhouse" ? "Greenhouse" : employer.ats === "lever" ? "Lever" : "Personio";
+            const reviewJobs = batch.jobs.filter(isActionableDiscoveryJob);
+            processed += reviewJobs.length;
+            printDiscoveryDiagnostics(`${atsLabel} ${employer.id}`, batch.counters, batch.diagnostics);
+            for (const job of reviewJobs) {
+              printJob(job, index, atsLabel);
+              index += 1;
+              total += 1;
+            }
+          } catch (error) {
+            const diagnostic: SourceDiagnostic = { stage: "search", locator: employer.id, code: "employer_failed", message: error instanceof Error ? error.message : String(error), transient: false };
+            printDiscoveryDiagnostics(`${employer.ats} ${employer.id}`, { searched: 0, detailed: 0, imported: 0, skipped: 0, failed: 1 }, [diagnostic]);
           }
-        } catch (error) {
-          const diagnostic: SourceDiagnostic = { stage: "search", locator: employer.id, code: "employer_failed", message: error instanceof Error ? error.message : String(error), transient: false };
-          printDiscoveryDiagnostics(`Personio ${employer.id}`, { searched: 0, detailed: 0, imported: 0, skipped: 0, failed: 1 }, [diagnostic]);
+          if (processed >= MODEL_REVIEW_LIMIT) break;
         }
-        if (processed >= MODEL_REVIEW_LIMIT) break;
       }
-      console.log(`Employer results for model review: ${count}`);
+      console.log(`Employer results for model review: ${total}`);
+      const manual = registry.employers.filter((entry) => entry.enabled && entry.policy === "manual_only");
+      console.log("\nTrusted official manual watchlist");
+      for (const track of tracks) {
+        console.log(`${trackLabel(track)}:`);
+        for (const source of manual.filter((entry) => entry.track === track)) {
+          const kind = source.source_kind === "agency" ? "agency" : "direct employer";
+          console.log(`- ${source.name} [${kind}] — ${source.career_url}`);
+        }
+      }
       console.log("No application was submitted.");
       return;
     } finally {
@@ -172,24 +202,27 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
   const workspace = await loadWorkspace(root);
   const sourceId = sourceName === "ba" ? "jobsuche" : sourceName;
   const sources = (workspace.search as { discovery?: { sources?: Array<FreehireSourceConfig | JobsucheSourceConfig> } }).discovery?.sources ?? [];
-  const source = sources.find((candidate) => candidate.id === sourceId);
-  if (!source) throw new Error(`workspace/search.yml does not configure ${sourceId === "freehire" ? "FreeHire" : "Jobsuche"}`);
+  const configured = sources.filter((candidate) => candidate.id === sourceId && candidate.enabled);
+  if (configured.length === 0) throw new Error(`workspace/search.yml does not configure an enabled ${sourceId === "freehire" ? "FreeHire" : "Jobsuche"} source`);
   const { db, repository } = openRepository(root);
   try {
-    const jobsuche = source.id === "jobsuche";
-    const batch = jobsuche
-      ? await discoverJobsuche(source, repository, workspace, { maxResults: MODEL_REVIEW_LIMIT })
-      : await discoverFreehire(source, repository, workspace, { maxResults: MODEL_REVIEW_LIMIT });
-    const sourceLabel = jobsuche ? "Jobsuche" : "FreeHire";
-    const displayed = batch.jobs.slice(0, MODEL_REVIEW_LIMIT);
-    console.log(`${sourceLabel} discovered: ${batch.jobs.length} | raw results for model review: ${displayed.length}`);
-    printDiscoveryDiagnostics(sourceLabel, batch.counters, batch.diagnostics);
-    for (const result of displayed) {
-      console.log("");
-      console.log(`${result.title} — ${result.company}`);
-      console.log(`Location: ${result.location ?? "unknown"}`);
-      console.log(`Source: ${sourceLabel} ${result.sourceId} — ${result.sourceUrl}`);
-      console.log(`Import: ${result.reused ? "reused" : "created"}`);
+    for (const track of tracks) {
+      console.log(`\n${trackLabel(track)}`);
+      let index = 1;
+      for (const source of configured.filter((candidate) => candidate.track === track)) {
+        const jobsuche = source.id === "jobsuche";
+        const batch = jobsuche
+          ? await discoverJobsuche(source, repository, workspace, { maxResults: MODEL_REVIEW_LIMIT })
+          : await discoverFreehire(source, repository, workspace, { maxResults: MODEL_REVIEW_LIMIT });
+        const sourceLabel = jobsuche ? "Jobsuche" : "FreeHire";
+        const displayed = batch.jobs.filter(isActionableDiscoveryJob).slice(0, MODEL_REVIEW_LIMIT);
+        console.log(`${sourceLabel} ${track} discovered: ${batch.jobs.length} | raw results for model review: ${displayed.length}`);
+        printDiscoveryDiagnostics(`${sourceLabel} ${track}`, batch.counters, batch.diagnostics);
+        for (const result of displayed) {
+          printJob(result, index, sourceLabel);
+          index += 1;
+        }
+      }
     }
     console.log("No application was submitted.");
   } finally {
@@ -363,19 +396,21 @@ async function runReport(root: string, command: string | undefined): Promise<voi
       const job = repository.readJob(id); const evaluation = repository.readEvaluation(id);
       return job && evaluation ? [{ id, job, evaluation }] : [];
     });
-    const top = evaluated.filter(({ evaluation }) => evaluation.verdict !== "BLOCKED" && evaluation.tier !== "C").sort((a, b) => b.evaluation.fit - a.evaluation.fit).slice(0, 5);
+    const reviewQueue = evaluated.filter(({ evaluation }) =>
+      evaluation.verdict !== "BLOCKED"
+      && !evaluation.gates.some((gate) => gate.status === "BLOCKED")).slice(0, 5);
     console.log(`# Daily job-search report — ${date}\n`);
     console.log(`Imported today: ${activity.imported} | Evaluated today: ${activity.evaluated} | Application updates today: ${activity.application_events}`);
-    console.log(`Tracked applications: ${applications.length} | Statuses: ${Object.entries(activity.statuses).map(([status, count]) => `${status}=${count}`).join(", ") || "none"} | Best matches shown: ${top.length}\n`);
-    console.log("## Best matches");
-    console.log(top.length ? top.map(({ id, job, evaluation }) => {
-      const matches = evaluation.mappings.filter((mapping) => mapping.credit > 0).length;
+    console.log(`Tracked applications: ${applications.length} | Statuses: ${Object.entries(activity.statuses).map(([status, count]) => `${status}=${count}`).join(", ") || "none"} | Model-review items shown: ${reviewQueue.length}\n`);
+    console.log("## Model review queue");
+    console.log(reviewQueue.length ? reviewQueue.map(({ id, job, evaluation }) => {
+      const matches = evaluation.mappings.filter((mapping) => mapping.evidenceIds.length > 0).length;
       const verify = evaluation.gates.filter((gate) => gate.status === "VERIFY").map((gate) => gate.reason).slice(0, 2).join("; ") || "no open verification gates";
-      return `- ${job.title ?? "Unknown role"} — ${job.company ?? "Unknown company"}: ${evaluation.tier}, fit ${evaluation.fit}, ${matches} evidence matches; verify: ${verify} [${id}]`;
-    }).join("\n") : "- No non-blocked matches above tier C yet.");
+      return `- ${job.title ?? "Unknown role"} — ${job.company ?? "Unknown company"}: ${matches} evidence candidates; verify: ${verify}; model decides Apply/Maybe/Skip [${id}]`;
+    }).join("\n") : "- No non-blocked vacancies waiting for model review.");
     console.log("\n## Next actions");
     const actions = applications.filter((item) => item.next_action).slice(0, 3).map((item) => `- ${item.next_action} [${item.job_id}]`);
-    console.log(actions.length ? actions.join("\n") : "- Review the top shortlist and verify shift, salary, and workplace details.");
+    console.log(actions.length ? actions.join("\n") : "- Review the model queue and verify shift, salary, and workplace details.");
   } finally { db.close(); }
 }
 

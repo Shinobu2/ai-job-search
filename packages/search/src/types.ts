@@ -2,6 +2,8 @@ import type { WorkspaceSnapshot } from "../../core/src/types";
 import type { EvaluationResult } from "../../jobs/src/types";
 import type { StorageRepository } from "../../storage/src/repository";
 
+export type SearchTrack = "datacenter" | "bridge";
+
 export type SourceDiagnostic = {
   stage: "search" | "detail" | "parse";
   locator: string;
@@ -33,13 +35,15 @@ export type DiscoveredJob = {
   location: string | null;
   logicalVacancyId: string;
   version: number;
+  track: SearchTrack;
   actionable: boolean;
-  needs_review?: boolean;
+  needs_review: boolean;
   evaluation?: EvaluationResult;
 };
 
 export type DiscoveryBatch = {
   sourceId: string;
+  track: SearchTrack;
   status: DiscoveryStatus;
   scope: DiscoveryScopeSummary;
   jobs: DiscoveredJob[];
@@ -76,9 +80,12 @@ export function isActionableDiscoveryJob(job: DiscoveredJob): boolean {
 }
 
 export function discoveryJobNeedsReview(job: DiscoveredJob): boolean {
-  const evaluation = job.evaluation;
   return job.needs_review === true
-    || evaluation === undefined
+    || evaluationNeedsReview(job.evaluation);
+}
+
+export function evaluationNeedsReview(evaluation: EvaluationResult | undefined): boolean {
+  return evaluation === undefined
     || evaluation.archetype === "REVIEW"
     || evaluation.tier === "C"
     || evaluation.verdict === "VERIFY"

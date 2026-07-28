@@ -27,5 +27,25 @@
   ],
   "requirements": [
     { "field": "skills", "type": "skill", "separator": ",", "rule_id": "skills.requirements" }
+  ],
+  "jobsuche_skill_rules": [
+    { "id": "pc_hardware", "pattern": "\\b(?:pc |computer\\/)?hardware\\b|komponenten", "value": "PC hardware" },
+    { "id": "server_hardware", "pattern": "\\bservers?\\b|serverhardware", "value": "server hardware" },
+    { "id": "networking", "pattern": "network|netzwerk|routers?|switches?", "value": "networking" },
+    { "id": "cabling", "pattern": "cabling|verkabelung|kabelmanagement", "value": "cabling" },
+    { "id": "hardware_troubleshooting", "pattern": "troubleshoot|hardware replacement|repair|fehlersuche|störungsbehebung|reparatur|instandhaltung", "value": "hardware troubleshooting" },
+    { "id": "linux", "pattern": "\\blinux\\b", "value": "Linux" },
+    { "id": "windows_server", "pattern": "windows server|active directory|\\bAD\\b|\\bDNS\\b|\\bDHCP\\b|gruppenrichtlinien", "value": "Windows Server / AD / DNS / DHCP" },
+    { "id": "noc_monitoring", "pattern": "\\bNOC\\b|network operations cent(?:er|re)|infrastrukturmonitoring|systemüberwachung|monitoring", "value": "NOC / infrastructure monitoring" },
+    { "id": "service_desk", "pattern": "service desk|help ?desk|ticket(?:ing|system)?|störungsticket", "value": "service desk / ticket handling" },
+    { "id": "itil_ticketing", "pattern": "\\bITIL\\b|ticket(?:ing|system)?|störungsticket", "value": "ITIL / ticket handling" },
+    { "id": "user_support", "pattern": "user support|benutzersupport|anwendersupport", "value": "user support" },
+    { "id": "datacenter_components", "pattern": "\\bRAID\\b|\\bSFP\\+?\\b|\\bKVM\\b", "value": "RAID / SFP / KVM" },
+    { "id": "it_rollout_break_fix", "pattern": "IT[- ]?Rollout|break[- ]?fix|Gerätetausch|client rollout", "value": "IT rollout / break-fix" },
+    { "id": "electronics_assembly", "pattern": "Gerätemontage|Elektronikmontage|Baugruppenmontage|electronic(?:s)? assembly", "value": "electronics assembly" },
+    { "id": "quality_inspection", "pattern": "Qualitätsprüfung|Qualitätskontrolle|Sichtprüfung|quality inspection|quality control", "value": "quality inspection" },
+    { "id": "warehouse_it_scanner", "pattern": "Scanner[- ]?Support|MDE[- ]?Gerät|warehouse IT|Lager-IT", "value": "warehouse IT / scanner support" },
+    { "id": "machine_operation", "pattern": "Maschinenbedien|Anlagenbedien|machine operator|equipment operator", "value": "machine / equipment operation" },
+    { "id": "career_changer", "pattern": "Quereinsteiger|career changer|entry level welcome", "value": "career changer welcome" }
   ]
 }

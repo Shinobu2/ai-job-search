@@ -5,7 +5,7 @@ import { importVacancy } from "../../jobs/src/import";
 import type { StoredJob, StoredJobSource, StorageRepository } from "../../storage/src/repository";
 import type { EmployerRegistryEntry } from "./employer-registry";
 import { diagnosticFromError, discoveryRunIdentity, discoveryStatus, fetchWithRetry, locationActionability, parseJson, prioritizeByLocation } from "./scheduler";
-import { emptyCounters, type DiscoveryBatch, type DiscoveryOptions, type SourceDiagnostic } from "./types";
+import { emptyCounters, evaluationNeedsReview, type DiscoveryBatch, type DiscoveryOptions, type SourceDiagnostic } from "./types";
 
 type LeverJob = {
   id: string;
@@ -73,12 +73,15 @@ export async function discoverLeverEmployer(
   const diagnostics: SourceDiagnostic[] = [];
   const jobs: DiscoveryBatch["jobs"] = [];
   let status: DiscoveryBatch["status"] = "failed";
+  let truncated = false;
 
   try {
     counters.searched = 1;
     const response = await fetchWithRetry(endpoint, { headers: { Accept: "application/json" } }, options, options.fetcher ?? fetch);
     const rows = parseLeverJobs(await parseJson<unknown>(response, "Lever"));
     const selected = prioritizeByLocation(rows, (row) => row.location, employer.cities).slice(0, limit);
+    truncated = rows.length > selected.length;
+    if (truncated) diagnostics.push({ stage: "search", locator: employer.id, code: "result_budget_truncated", message: `Review budget selected ${selected.length} of ${rows.length} vacancies`, transient: false });
     counters.detailed = selected.length;
     counters.skipped += rows.length - selected.length;
     for (const row of selected) {
@@ -100,26 +103,27 @@ export async function discoverLeverEmployer(
           const stored = repository.readJob(imported.id);
           if (!stored) throw new Error(`Imported Lever job is unavailable: ${imported.id}`);
           const extracted = extractVacancy((stored as StoredJobSource).rawContent);
-          evaluation = evaluateVacancy(stored as StoredJob, extracted, workspace, options.asOf ?? now().slice(0, 10));
+          evaluation = evaluateVacancy(stored as StoredJob, extracted, workspace, options.asOf ?? now().slice(0, 10), { track: employer.track });
           repository.persistEvaluation(buildEvaluationInput(evaluation, extracted, workspace));
         }
         jobs.push({
           id: imported.id, reused: imported.reused, sourceId: stableSourceId, stableSourceId, sourceUrl: row.hostedUrl,
           title: row.title, company: employer.name, location: row.location, logicalVacancyId: imported.logicalVacancyId,
-          version: imported.version, actionable: area !== "out_of_area", evaluation,
+          version: imported.version, track: employer.track, actionable: area !== "out_of_area",
+          needs_review: evaluationNeedsReview(evaluation), evaluation,
         });
       } catch (error) {
         counters.failed += 1;
         diagnostics.push({ stage: "parse", locator: stableSourceId, code: "processing_failed", message: error instanceof Error ? error.message : String(error), transient: false });
       }
     }
-    status = discoveryStatus(counters);
+    status = discoveryStatus(counters, truncated);
   } catch (error) {
     counters.failed += 1;
     diagnostics.push(diagnosticFromError(error, "search", employer.id));
-    status = discoveryStatus(counters);
+    status = discoveryStatus(counters, truncated);
   } finally {
     repository.finishDiscoveryRun(runId, { status, counters, diagnostics, finishedAt: now() });
   }
-  return { sourceId, status, scope: { planned: 1, completed: status === "failed" ? 0 : 1, failed: status === "failed" ? 1 : 0 }, jobs, counters, diagnostics };
+  return { sourceId, track: employer.track, status, scope: { planned: 1, completed: status === "failed" ? 0 : 1, failed: status === "failed" ? 1 : 0 }, jobs, counters, diagnostics };
 }

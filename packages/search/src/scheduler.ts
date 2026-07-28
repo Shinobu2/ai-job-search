@@ -1,9 +1,73 @@
 import type { DiscoveryOptions, SourceDiagnostic } from "./types";
 import { createHash } from "node:crypto";
-import type { DiscoveryCounters, DiscoveryStatus } from "./types";
+import type { DiscoveryCounters, DiscoveryScopeSummary, DiscoveryStatus, SearchTrack } from "./types";
 
 const MAX_CONCURRENCY = 5;
 const RETRY_DELAYS = [250, 500] as const;
+
+type DiscoveryScopeSource = {
+  track: SearchTrack;
+  keywords: string[];
+  cities: string[];
+  country: string;
+  max_pages: number;
+  page_size: number;
+  radius_km?: number;
+  published_within_days?: number;
+  working_time?: string[];
+  include_temporary_work?: boolean;
+};
+
+export type DiscoveryLoopState = {
+  scopes: Array<{ keyword: string; city: string }>;
+  active: boolean[];
+  failedScopes: Set<number>;
+  completedScopes: Set<number>;
+};
+
+export function normalizedDiscoveryScope(source: DiscoveryScopeSource): unknown {
+  const normalized = (values: string[]) => values.map((value) => value.trim().toLowerCase());
+  return {
+    track: source.track,
+    keywords: normalized(source.keywords),
+    cities: normalized(source.cities),
+    country: source.country,
+    maxPages: source.max_pages,
+    pageSize: source.page_size,
+    ...(source.radius_km === undefined ? {} : { radiusKm: source.radius_km }),
+    ...(source.published_within_days === undefined ? {} : { publishedWithinDays: source.published_within_days }),
+    ...(source.working_time === undefined ? {} : { workingTime: normalized(source.working_time) }),
+    ...(source.include_temporary_work === undefined ? {} : { includeTemporaryWork: source.include_temporary_work }),
+  };
+}
+
+export function createDiscoveryLoopState(keywords: string[], cities: string[]): DiscoveryLoopState {
+  const scopes = roundRobinScopes(keywords, cities);
+  return {
+    scopes,
+    active: scopes.map(() => true),
+    failedScopes: new Set<number>(),
+    completedScopes: new Set<number>(),
+  };
+}
+
+export function discoveryScopeSummary(state: DiscoveryLoopState): DiscoveryScopeSummary {
+  return {
+    planned: state.scopes.length,
+    completed: state.completedScopes.size,
+    failed: state.failedScopes.size,
+  };
+}
+
+export function assertReadableGermanSource(
+  source: { enabled: boolean; mode: string; country: string; track: string },
+  label: string,
+): void {
+  if (!source.enabled) throw new Error(`${label} source is disabled by workspace policy`);
+  if (source.mode !== "read_import_evaluate") throw new Error(`${label} source must use read_import_evaluate mode`);
+  if (source.country !== "DE") throw new Error(`${label} source only supports country DE`);
+  if (!["datacenter", "bridge"].includes(source.track)) throw new Error(`${label} source track must be datacenter or bridge`);
+}
 
 export async function mapBounded<T, R>(
   values: T[],
@@ -149,7 +213,8 @@ export function discoveryRunIdentity(sourceId: string, scope: unknown, startedAt
   return { runId: `discovery_${runHash}`, scopeHash };
 }
 
-export function discoveryStatus(counters: DiscoveryCounters): DiscoveryStatus {
+export function discoveryStatus(counters: DiscoveryCounters, truncated = false): DiscoveryStatus {
+  if (truncated) return counters.imported > 0 ? "partial" : "failed";
   if (counters.failed === 0) return "success";
   return counters.imported > 0 ? "partial" : "failed";
 }

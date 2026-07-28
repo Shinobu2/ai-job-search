@@ -1,26 +1,31 @@
 import type { WorkspaceSnapshot } from "../../core/src/types";
+import { canonicalHttpUrl } from "../../core/src/canonical-url";
 import { buildEvaluationInput, evaluateVacancy } from "../../jobs/src/evaluate";
 import { extractVacancy } from "../../jobs/src/extract";
 import { importVacancy } from "../../jobs/src/import";
 import type { StoredJob, StoredJobSource, StorageRepository } from "../../storage/src/repository";
 import {
+  assertReadableGermanSource,
+  createDiscoveryLoopState,
   diagnosticFromError,
   discoveryRunIdentity,
+  discoveryScopeSummary,
   discoveryStatus,
   fetchWithRetry,
   locationActionability,
   mapBounded,
+  normalizedDiscoveryScope,
   parseJson,
   prioritizeByLocation,
   ReadFailure,
-  roundRobinScopes,
 } from "./scheduler";
-import { emptyCounters, type DiscoveredJob, type DiscoveryBatch, type DiscoveryOptions, type SourceDiagnostic } from "./types";
+import { emptyCounters, evaluationNeedsReview, type DiscoveredJob, type DiscoveryBatch, type DiscoveryOptions, type SearchTrack, type SourceDiagnostic } from "./types";
 
 export type { DiscoveredJob, DiscoveryBatch, DiscoveryOptions } from "./types";
 
 export type FreehireSourceConfig = {
   id: "freehire";
+  track: SearchTrack;
   enabled: boolean;
   mode: "read_import_evaluate";
   country: "DE";
@@ -43,6 +48,8 @@ type FreehireJob = {
   countries: string[];
   cities: string[];
   enrichment: Record<string, unknown>;
+  external_id?: string | null;
+  company_slug?: string | null;
 };
 
 type Envelope<T> = { data: T; meta?: { total?: number } };
@@ -56,7 +63,7 @@ function searchUrl(source: FreehireSourceConfig, keyword: string, city: string, 
     q: keyword,
     limit: String(source.page_size),
     offset: String((page - 1) * source.page_size),
-    semantic_ratio: "0",
+    semantic_ratio: "0.5",
   });
   params.append("countries", source.country);
   params.append("cities", city);
@@ -117,9 +124,15 @@ function canonicalText(job: FreehireJob): string {
   ].join("\n");
 }
 
-function normalizedScope(source: FreehireSourceConfig): unknown {
-  const normalized = (values: string[]) => values.map((value) => value.trim().toLowerCase());
-  return { keywords: normalized(source.keywords), cities: normalized(source.cities), country: source.country, maxPages: source.max_pages, pageSize: source.page_size };
+function sourceListingAliases(job: FreehireJob): string[] {
+  const aliases: string[] = [];
+  const canonicalUrl = canonicalHttpUrl(job.url);
+  if (canonicalUrl) aliases.push(`url:${canonicalUrl}`);
+  if (job.external_id?.trim()) aliases.push(`external:${job.external_id.trim().toLowerCase()}`);
+  const requisition = job.url.match(/USR(\d{6,})EXTERNAL/i) ?? job.url.match(/_R(\d{6,})(?:\b|[/?#])/i);
+  const company = (job.company_slug ?? job.company ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (company && requisition) aliases.push(`requisition:${company}:${requisition[1]}`);
+  return aliases;
 }
 
 export async function discoverFreehire(
@@ -128,25 +141,25 @@ export async function discoverFreehire(
   workspace: WorkspaceSnapshot,
   options: DiscoveryOptions = {},
 ): Promise<DiscoveryBatch> {
-  if (!source.enabled) throw new Error("FreeHire source is disabled by workspace policy");
-  if (source.mode !== "read_import_evaluate") throw new Error("FreeHire source must use read_import_evaluate mode");
-  if (source.country !== "DE") throw new Error("FreeHire source only supports country DE");
+  assertReadableGermanSource(source, "FreeHire");
 
   const now = options.now ?? (() => new Date().toISOString());
   const startedAt = now();
-  const identity = discoveryRunIdentity(source.id, normalizedScope(source), startedAt);
-  const runId = repository.startDiscoveryRunAllocated({ id: identity.runId, sourceId: source.id, scopeHash: identity.scopeHash, startedAt }).id;
+  const batchSourceId = `${source.id}:${source.track}`;
+  const identity = discoveryRunIdentity(batchSourceId, normalizedDiscoveryScope(source), startedAt);
+  const runId = repository.startDiscoveryRunAllocated({ id: identity.runId, sourceId: batchSourceId, scopeHash: identity.scopeHash, startedAt }).id;
 
   const counters = emptyCounters();
   const diagnostics: SourceDiagnostic[] = [];
-  const scopes = roundRobinScopes(source.keywords, source.cities);
-  const active = scopes.map(() => true);
-  const failedScopes = new Set<number>();
-  const completedScopes = new Set<number>();
+  const loop = createDiscoveryLoopState(source.keywords, source.cities);
+  const { scopes, active, failedScopes, completedScopes } = loop;
   const seen = new Map<string, FreehireJob>();
+  const seenDetailAliases = new Set<string>();
   const rows: DiscoveredJob[] = [];
+  let truncated = false;
   let batch: DiscoveryBatch = {
-    sourceId: source.id,
+    sourceId: batchSourceId,
+    track: source.track,
     status: "failed",
     scope: { planned: scopes.length, completed: 0, failed: scopes.length },
     jobs: [],
@@ -199,6 +212,14 @@ export async function discoverFreehire(
     (summary) => summary.location,
     source.cities,
   ).slice(0, detailLimit);
+  truncated = seen.size > summaries.length;
+  if (truncated) diagnostics.push({
+    stage: "search",
+    locator: source.id,
+    code: "result_budget_truncated",
+    message: `Review budget selected ${summaries.length} of ${seen.size} discovered vacancies`,
+    transient: false,
+  });
   counters.detailed = summaries.length;
   const details = await mapBounded(summaries, CONCURRENCY, async (summary) => {
     const url = `${FREEHIRE_BASE_URL}/api/v1/jobs/${encodeURIComponent(summary.public_slug)}`;
@@ -216,11 +237,18 @@ export async function discoverFreehire(
     const detail = result.value;
     if (!detail.public_slug || !detail.url || !detail.title) {
       counters.skipped += 1;
-      counters.failed += 1;
       diagnostics.push({ stage: "parse", locator: summary.public_slug, code: "missing_identity", message: "FreeHire detail is missing public_slug, url, or title", transient: false });
       continue;
     }
     const stableSourceId = `freehire:${detail.public_slug}`;
+    const aliases = sourceListingAliases(detail);
+    const duplicate = aliases.some((alias) => seenDetailAliases.has(alias));
+    for (const alias of aliases) seenDetailAliases.add(alias);
+    if (duplicate) {
+      counters.skipped += 1;
+      diagnostics.push({ stage: "parse", locator: stableSourceId, code: "duplicate_source_listing", message: "FreeHire returned the same source vacancy under another listing identity", transient: false });
+      continue;
+    }
     try {
       const imported = await importVacancy({
         text: canonicalText(detail), sourceUrl: detail.url, sourceId: stableSourceId, sourceType: "freehire_public_api",
@@ -239,7 +267,7 @@ export async function discoverFreehire(
         const stored = repository.readJob(imported.id);
         if (!stored) throw new Error(`Imported FreeHire job is unavailable: ${imported.id}`);
         const extracted = extractVacancy((stored as StoredJobSource).rawContent);
-        evaluation = evaluateVacancy(stored as StoredJob, extracted, workspace, options.asOf ?? now().slice(0, 10));
+        evaluation = evaluateVacancy(stored as StoredJob, extracted, workspace, options.asOf ?? now().slice(0, 10), { track: source.track });
         repository.persistEvaluation(buildEvaluationInput(evaluation, extracted, workspace));
       }
       rows.push({
@@ -253,7 +281,9 @@ export async function discoverFreehire(
         location: detail.location,
         logicalVacancyId: imported.logicalVacancyId,
         version: imported.version,
+        track: source.track,
         actionable: area !== "out_of_area",
+        needs_review: evaluationNeedsReview(evaluation),
         evaluation,
       });
     } catch (error) {
@@ -262,14 +292,14 @@ export async function discoverFreehire(
     }
   }
 
-    const status = discoveryStatus(counters);
-    const scope = { planned: scopes.length, completed: completedScopes.size, failed: failedScopes.size };
-    batch = { sourceId: source.id, status, scope, jobs: rows, counters, diagnostics };
+    const status = discoveryStatus(counters, truncated);
+    const scope = discoveryScopeSummary(loop);
+    batch = { sourceId: batchSourceId, track: source.track, status, scope, jobs: rows, counters, diagnostics };
   } catch (error) {
     counters.failed += 1;
     diagnostics.push({ stage: "parse", locator: source.id, code: "connector_exception", message: error instanceof Error ? error.message : String(error), transient: false });
-    const status = discoveryStatus(counters);
-    batch = { sourceId: source.id, status, scope: { planned: scopes.length, completed: completedScopes.size, failed: failedScopes.size }, jobs: [...rows], counters, diagnostics };
+    const status = discoveryStatus(counters, truncated);
+    batch = { sourceId: batchSourceId, track: source.track, status, scope: discoveryScopeSummary(loop), jobs: [...rows], counters, diagnostics };
   } finally {
     repository.finishDiscoveryRun(runId, { status: batch.status, counters, diagnostics, finishedAt: now() });
   }

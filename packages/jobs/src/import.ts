@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
+import { canonicalHttpUrl } from "../../core/src/canonical-url";
 import type { StorageRepository, StoredJob } from "../../storage/src/repository";
 import type { DiscoveryImportOptions, ImportRequest, ImportedJob } from "./types";
 
@@ -14,21 +15,6 @@ type SourceInput = {
 
 function hash(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
-}
-
-function normalizeUrl(value: string): string | undefined {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return undefined;
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
-  url.protocol = url.protocol.toLowerCase();
-  url.hostname = url.hostname.toLowerCase();
-  url.hash = "";
-  if (url.pathname.length > 1) url.pathname = url.pathname.replace(/\/+$/, "");
-  return url.toString();
 }
 
 function decodeHtml(value: string): string {
@@ -142,7 +128,7 @@ function asImported(job: StoredJob, sourceHash: string, reused: boolean, logical
 
 export async function importVacancy(request: ImportRequest, repository: StorageRepository, options: DiscoveryImportOptions = {}): Promise<ImportedJob> {
   const source = await sourceFrom(request);
-  const canonicalUrl = request.sourceUrl ? normalizeUrl(request.sourceUrl) : undefined;
+  const canonicalUrl = request.sourceUrl ? canonicalHttpUrl(request.sourceUrl) ?? undefined : undefined;
   const values = identity(source.extractionText);
   const stableKey = canonicalUrl ?? (request.sourceId ? `source-id:${request.sourceId}` : source.rawHash);
   const sourceId = `source_${hash(`source:${stableKey}:${source.rawHash}`)}`;
