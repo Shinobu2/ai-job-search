@@ -148,8 +148,8 @@ test("uses exact planned §24 wording and includes its availability only once pe
     },
     asOfDate: "2026-07-28",
   });
-  const exactEn = "I am relocating to Frankfurt am Main on 7 August 2026 and will hold a residence permit under §24 AufenthG (temporary protection), which includes full access to the German labour market — no employer sponsorship is required. I am available to start from 17 August 2026.";
-  const exactDe = "Ich ziehe am 7. August 2026 nach Frankfurt am Main und erhalte eine Aufenthaltserlaubnis nach §24 AufenthG, die eine uneingeschränkte Erwerbstätigkeit erlaubt — ein Sponsoring durch den Arbeitgeber ist nicht erforderlich. Ich kann ab dem 17. August 2026 beginnen.";
+  const exactEn = "I am relocating to Frankfurt am Main on 7 August 2026 and plan to apply for a residence permit under §24 AufenthG (temporary protection) after arrival; German work authorization has not yet been issued. No employer sponsorship is required. I can start no earlier than 17 August 2026, and only after receiving an Aufenthaltstitel or Fiktionsbescheinigung that explicitly permits employment.";
+  const exactDe = "Ich ziehe am 7. August 2026 nach Frankfurt am Main und plane, nach meiner Ankunft einen Aufenthaltstitel nach §24 AufenthG (vorübergehender Schutz) zu beantragen; eine Erlaubnis zur Erwerbstätigkeit liegt derzeit noch nicht vor. Ein Sponsoring durch den Arbeitgeber ist nicht erforderlich. Ich kann frühestens am 17. August 2026 und nur dann beginnen, wenn mir ein Aufenthaltstitel oder eine Fiktionsbescheinigung mit ausdrücklicher Erlaubnis zur Erwerbstätigkeit ausgestellt wurde.";
 
   expect(packet.englishCv.match(/I am relocating to Frankfurt am Main/g)).toHaveLength(1);
   expect(packet.germanCv.match(/Ich ziehe am 7\. August 2026/g)).toHaveLength(1);

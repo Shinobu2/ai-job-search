@@ -139,9 +139,7 @@ function prepareWorkAuthorizationAnswer(
   if (row.comment_supported) {
     return {
       ...row,
-      proposed_value: locale === "de"
-        ? "Ja — verfügbar ab 17. August 2026 mit geplanter §24-Aufenthaltserlaubnis; kein Arbeitgeber-Sponsoring erforderlich."
-        : "Yes — available to start from 17 August 2026 under planned §24 authorization; no employer sponsorship required.",
+      proposed_value: workAuthorizationWording[locale],
       source_evidence: sourceEvidence,
       status: "known",
       sensitive: false,
