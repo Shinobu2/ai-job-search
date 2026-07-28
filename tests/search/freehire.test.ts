@@ -182,6 +182,7 @@ test("FreeHire collapses confirmed source aliases but preserves different requis
     "ecolab-phenom": { ...freehireJob("ecolab-phenom"), title: "Servicetechniker Rechenzentrum", company: "Ecolab", company_slug: "ecolab", external_id: "phenom:293997", url: "https://jobs.ecolab.com/global/en/job/EIYEIEUSR00293997EXTERNALENGLOBAL" },
     "ecolab-workday": { ...freehireJob("ecolab-workday"), title: "Servicetechniker Rechenzentrum", company: "ecolab", company_slug: "ecolab", external_id: "workday:R00293997", url: "https://ecolab.wd1.myworkdayjobs.com/Ecolab_External/job/Frankfurt/Technician_R00293997" },
     "ecolab-other": { ...freehireJob("ecolab-other"), title: "Servicetechniker Rechenzentrum", company: "Ecolab", company_slug: "ecolab", external_id: "workday:R00999999", url: "https://ecolab.wd1.myworkdayjobs.com/Ecolab_External/job/Frankfurt/Technician_R00999999" },
+    "other-company": { ...freehireJob("other-company"), title: "IT Technician", company: "Other GmbH", company_slug: "other", external_id: "workday:R00293997", url: "https://careers.other.example/jobs/technician" },
   };
   globalThis.fetch = (async (input: string | URL) => {
     const url = new URL(String(input));
@@ -191,7 +192,7 @@ test("FreeHire collapses confirmed source aliases but preserves different requis
   }) as typeof fetch;
   try {
     const results = await discoverFreehire(
-      { ...source, cities: ["Frankfurt"], page_size: 5 },
+      { ...source, cities: ["Frankfurt"], page_size: 6 },
       new StorageRepository(db),
       workspace as never,
       { asOf: "2026-07-12" },
@@ -200,8 +201,9 @@ test("FreeHire collapses confirmed source aliases but preserves different requis
       "freehire:sika-one",
       "freehire:ecolab-phenom",
       "freehire:ecolab-other",
+      "freehire:other-company",
     ]);
-    expect(results.counters).toEqual({ searched: 1, detailed: 5, imported: 3, skipped: 2, failed: 0 });
+    expect(results.counters).toEqual({ searched: 1, detailed: 6, imported: 4, skipped: 2, failed: 0 });
     expect(results.diagnostics.filter((item) => item.code === "duplicate_source_listing")).toHaveLength(2);
   } finally {
     globalThis.fetch = originalFetch;

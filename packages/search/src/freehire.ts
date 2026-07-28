@@ -126,11 +126,11 @@ function canonicalText(job: FreehireJob): string {
 
 function sourceListingAliases(job: FreehireJob): string[] {
   const aliases: string[] = [];
+  const company = (job.company_slug ?? job.company ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "");
   const canonicalUrl = canonicalHttpUrl(job.url);
   if (canonicalUrl) aliases.push(`url:${canonicalUrl}`);
-  if (job.external_id?.trim()) aliases.push(`external:${job.external_id.trim().toLowerCase()}`);
+  if (company && job.external_id?.trim()) aliases.push(`external:${company}:${job.external_id.trim().toLowerCase()}`);
   const requisition = job.url.match(/USR(\d{6,})EXTERNAL/i) ?? job.url.match(/_R(\d{6,})(?:\b|[/?#])/i);
-  const company = (job.company_slug ?? job.company ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "");
   if (company && requisition) aliases.push(`requisition:${company}:${requisition[1]}`);
   return aliases;
 }
