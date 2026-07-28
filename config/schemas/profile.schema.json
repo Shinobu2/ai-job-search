@@ -74,6 +74,8 @@
       "type": "object",
       "required": ["english", "german"],
       "properties": {
+        "ukrainian": { "$ref": "common.schema.json#/$defs/verifiedValue" },
+        "russian": { "$ref": "common.schema.json#/$defs/verifiedValue" },
         "english": { "$ref": "common.schema.json#/$defs/verifiedValue" },
         "german": { "$ref": "common.schema.json#/$defs/verifiedValue" }
       },
@@ -90,14 +92,46 @@
       "required": ["work_authorization", "education_equivalence"],
       "properties": {
         "work_authorization": {
-          "type": "object",
-          "required": ["value", "verification_status", "provenance"],
-          "properties": {
-            "value": { "type": "null" },
-            "verification_status": { "const": "unknown" },
-            "provenance": { "type": "array", "maxItems": 0 }
-          },
-          "additionalProperties": false
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["value", "verification_status", "provenance"],
+              "properties": {
+                "value": { "type": "null" },
+                "verification_status": { "const": "unknown" },
+                "provenance": { "type": "array", "maxItems": 0 }
+              },
+              "additionalProperties": false
+            },
+            {
+              "allOf": [
+                { "$ref": "common.schema.json#/$defs/verifiedValue" },
+                {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "object",
+                      "required": ["status", "basis", "employment_access", "sponsorship_required", "available_from"],
+                      "properties": {
+                        "status": { "const": "planned_after_arrival" },
+                        "basis": { "const": "§24 AufenthG (temporary protection)" },
+                        "employment_access": { "const": "full_once_issued" },
+                        "sponsorship_required": { "const": false },
+                        "available_from": {
+                          "type": "string",
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "verification_status": {
+                      "enum": ["user_confirmed", "document_verified"]
+                    }
+                  }
+                }
+              ]
+            }
+          ]
         },
         "education_equivalence": {
           "type": "object",

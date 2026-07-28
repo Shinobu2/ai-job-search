@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { prepareAvailabilityAnswer, type AvailabilityLocale } from "./availability";
 
 export type AnswerStatus = "known" | "ask" | "user_decision";
+export type WorkAuthorizationIntent = "sponsorship" | "authorized_to_work";
 export type AnswerCategory =
   | "identity" | "contact" | "availability" | "work_authorization"
   | "legal_declaration" | "consent" | "salary" | "relocation" | "other";
@@ -15,6 +18,8 @@ export type ApplicationAnswer = {
   last_confirmed_date: string | null;
   required: boolean;
   category: AnswerCategory;
+  question_intent?: WorkAuthorizationIntent;
+  comment_supported?: boolean;
 };
 
 export type ApplicationAnswerMatrix = {
@@ -32,6 +37,11 @@ const categories = new Set<AnswerCategory>([
 ]);
 const pageBlockers = new Set<PageBlocker>(["captcha", "otp", "login", "e_signature"]);
 const decisionCategories = new Set<AnswerCategory>(["work_authorization", "legal_declaration", "consent", "salary", "relocation"]);
+const workAuthorizationIntents = new Set<WorkAuthorizationIntent>(["sponsorship", "authorized_to_work"]);
+
+export const workAuthorizationWording = JSON.parse(
+  readFileSync(join(import.meta.dir, "../../../config/work-authorization-wording.json"), "utf8"),
+) as Readonly<{ en: string; de: string }>;
 
 function optionalString(value: unknown, label: string): string | null {
   if (value === null || value === undefined) return null;
@@ -62,6 +72,13 @@ function parseField(value: unknown, index: number): ApplicationAnswer {
   const lastConfirmed = optionalString(row.last_confirmed_date, `fields[${index}].last_confirmed_date`);
   if (lastConfirmed && !validIsoDate(lastConfirmed)) throw new Error(`fields[${index}].last_confirmed_date must be a valid YYYY-MM-DD date or null`);
   const sourceEvidence = (row.source_evidence as string[]).map((item) => item.trim()).filter(Boolean);
+  const questionIntent = row.question_intent as WorkAuthorizationIntent | undefined;
+  if (questionIntent !== undefined && !workAuthorizationIntents.has(questionIntent)) {
+    throw new Error(`fields[${index}].question_intent is invalid`);
+  }
+  if (row.comment_supported !== undefined && typeof row.comment_supported !== "boolean") {
+    throw new Error(`fields[${index}].comment_supported must be boolean`);
+  }
   return {
     field: row.field.trim(),
     proposed_value: optionalString(row.proposed_value, `fields[${index}].proposed_value`),
@@ -71,7 +88,59 @@ function parseField(value: unknown, index: number): ApplicationAnswer {
     last_confirmed_date: lastConfirmed,
     required: row.required,
     category: row.category as AnswerCategory,
+    ...(questionIntent ? { question_intent: questionIntent } : {}),
+    ...(typeof row.comment_supported === "boolean" ? { comment_supported: row.comment_supported } : {}),
   };
+}
+
+function hasConfirmedPlannedAuthorization(profile: Record<string, unknown>): boolean {
+  const legal = profile.legal;
+  if (!legal || typeof legal !== "object" || Array.isArray(legal)) return false;
+  const wrapper = (legal as Record<string, unknown>).work_authorization;
+  if (!wrapper || typeof wrapper !== "object" || Array.isArray(wrapper)) return false;
+  const record = wrapper as Record<string, unknown>;
+  if (!["user_confirmed", "document_verified"].includes(String(record.verification_status))) return false;
+  const value = record.value;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const authorization = value as Record<string, unknown>;
+  return authorization.status === "planned_after_arrival"
+    && authorization.basis === "§24 AufenthG (temporary protection)"
+    && authorization.employment_access === "full_once_issued"
+    && authorization.sponsorship_required === false
+    && authorization.available_from === "2026-08-17";
+}
+
+function prepareWorkAuthorizationAnswer(
+  row: ApplicationAnswer,
+  profile: Record<string, unknown>,
+  locale: AvailabilityLocale,
+): ApplicationAnswer | null {
+  if (!hasConfirmedPlannedAuthorization(profile) || !row.question_intent) return null;
+  const sourceEvidence = [
+    "profile.legal.work_authorization",
+    "profile.availability.available_from",
+  ];
+  if (row.question_intent === "sponsorship") {
+    return {
+      ...row,
+      proposed_value: locale === "de" ? "Nein" : "No",
+      source_evidence: sourceEvidence,
+      status: "known",
+      sensitive: false,
+    };
+  }
+  if (row.comment_supported) {
+    return {
+      ...row,
+      proposed_value: locale === "de"
+        ? "Ja — verfügbar ab 17. August 2026 mit geplanter §24-Aufenthaltserlaubnis; kein Arbeitgeber-Sponsoring erforderlich."
+        : "Yes — available to start from 17 August 2026 under planned §24 authorization; no employer sponsorship required.",
+      source_evidence: sourceEvidence,
+      status: "known",
+      sensitive: false,
+    };
+  }
+  return null;
 }
 
 export function prepareApplicationAnswerMatrix(
@@ -95,6 +164,10 @@ export function prepareApplicationAnswerMatrix(
         ? { ...row, proposed_value: availability.proposedValue, source_evidence: availability.source, status: "known" as const, sensitive: false, last_confirmed_date: availability.lastConfirmedDate }
         : { ...row, proposed_value: null, source_evidence: [], status: "ask" as const };
     }
+    if (row.category === "work_authorization") {
+      return prepareWorkAuthorizationAnswer(row, profile, locale)
+        ?? { ...row, proposed_value: null, source_evidence: [], status: "user_decision" as const, sensitive: true };
+    }
     if (decisionCategories.has(row.category)) {
       return { ...row, proposed_value: null, status: "user_decision" as const, sensitive: true };
     }
@@ -105,7 +178,7 @@ export function prepareApplicationAnswerMatrix(
   });
 
   const blockers = [
-    ...fields.filter((row) => decisionCategories.has(row.category)).map((row) => `${row.field}: explicit user decision required`),
+    ...fields.filter((row) => row.status === "user_decision").map((row) => `${row.field}: explicit user decision required`),
     ...fields.filter((row) => row.required && row.status !== "known").map((row) => `${row.field}: required answer is not confirmed`),
     ...(blockersInput as PageBlocker[]).map((blocker) => `${blocker}: manual stop required`),
   ];

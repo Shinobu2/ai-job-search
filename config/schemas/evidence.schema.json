@@ -12,7 +12,19 @@
         "required": ["id", "kind", "statement", "reviewer_status", "provenance"],
         "properties": {
           "id": { "type": "string", "minLength": 1 },
-          "kind": { "type": "string", "enum": ["hardware", "networking", "informal_assistance", "planned_project"] },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "hands_on",
+              "home_lab",
+              "theory",
+              "employment",
+              "hardware",
+              "networking",
+              "informal_assistance",
+              "planned_project"
+            ]
+          },
           "statement": { "type": "string", "minLength": 1 },
           "reviewer_status": { "type": "string", "enum": ["unreviewed", "user_confirmed", "document_verified", "UNKNOWN"] },
           "provenance": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/provenance" } }
@@ -46,7 +58,17 @@
           {
             "if": {
               "properties": {
-                "kind": { "enum": ["hardware", "networking", "informal_assistance"] }
+                "kind": {
+                  "enum": [
+                    "hands_on",
+                    "home_lab",
+                    "theory",
+                    "employment",
+                    "hardware",
+                    "networking",
+                    "informal_assistance"
+                  ]
+                }
               }
             },
             "then": { "properties": { "reviewer_status": { "enum": ["unreviewed", "user_confirmed", "document_verified"] } } }

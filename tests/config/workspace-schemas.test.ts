@@ -71,6 +71,28 @@ test("profile rejects inferred legal status", async () => {
   expect(() => validateWorkspaceFile("profile", profile)).toThrow();
 });
 
+test("profile accepts an honestly planned §24 authorization after arrival", async () => {
+  const profile = await readExample("profile");
+  profile.legal.work_authorization = {
+    value: {
+      status: "planned_after_arrival",
+      basis: "§24 AufenthG (temporary protection)",
+      employment_access: "full_once_issued",
+      sponsorship_required: false,
+      available_from: "2026-08-17",
+    },
+    verification_status: "user_confirmed",
+    provenance: [
+      {
+        source_type: "user_statement",
+        source_ref: "conversation_2026-07-28",
+      },
+    ],
+  };
+
+  expect(() => validateWorkspaceFile("profile", profile)).not.toThrow();
+});
+
 test("profile rejects user-confirmed facts without user-statement provenance", async () => {
   const profile = await readExample("profile");
   profile.locations.radius_km.provenance = [];
@@ -136,6 +158,21 @@ test("evidence enforces reviewer status for each established evidence kind", asy
     "unreviewed";
 
   expect(() => validateWorkspaceFile("evidence", evidence)).toThrow();
+});
+
+test("evidence accepts explicit hands-on, home-lab, theory, and employment kinds", async () => {
+  const evidence = await readExample("evidence");
+  const kinds = ["hands_on", "home_lab", "theory", "employment"];
+
+  evidence.records = kinds.map((kind, index) => ({
+    id: `EVIDENCE_${index}`,
+    kind,
+    statement: `${kind} evidence reported by the candidate.`,
+    reviewer_status: "user_confirmed",
+    provenance: [{ source_type: "user_statement", source_ref: "conversation_2026-07-28" }],
+  }));
+
+  expect(() => validateWorkspaceFile("evidence", evidence)).not.toThrow();
 });
 
 test("search example has no duplicate candidate agencies policy", async () => {
