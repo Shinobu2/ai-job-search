@@ -85,19 +85,26 @@ test("setup rerun preserves additional keys inside a user-owned map value", asyn
   }
 });
 
-test("setup adds newly shipped discovery sources without replacing configured sources", async () => {
+test("setup adds newly shipped discovery tracks without merging distinct provider tracks", async () => {
   const root = await copyExamplesToTemp();
   try {
-    await setupWorkspace(root);
     const searchPath = join(root, "workspace", "search.yml");
     const search = await readYaml(searchPath);
-    search.discovery.sources = [search.discovery.sources[0]];
-    search.discovery.sources[0].cities = ["Darmstadt"];
+    search.discovery.sources = search.discovery.sources.filter((source: { track: string }) => source.track !== "welding");
+    search.discovery.sources.find((source: { id: string; track: string }) =>
+      source.id === "freehire" && source.track === "datacenter").cities = ["Darmstadt"];
+    search.discovery.sources.find((source: { id: string; track: string }) =>
+      source.id === "freehire" && source.track === "bridge").cities = ["Wiesbaden"];
     await writeYaml(searchPath, search);
     await setupWorkspace(root);
     const rerun = await readYaml(searchPath);
     expect(rerun.discovery.sources.map((source: { id: string }) => source.id)).toContain("jobsuche");
-    expect(rerun.discovery.sources.find((source: { id: string }) => source.id === "freehire").cities).toEqual(["Darmstadt"]);
+    expect(rerun.discovery.sources.find((source: { id: string; track: string }) =>
+      source.id === "freehire" && source.track === "datacenter").cities).toEqual(["Darmstadt"]);
+    expect(rerun.discovery.sources.find((source: { id: string; track: string }) =>
+      source.id === "freehire" && source.track === "bridge").cities).toEqual(["Wiesbaden"]);
+    expect(rerun.discovery.sources.find((source: { id: string; track: string }) =>
+      source.id === "freehire" && source.track === "welding").cities).toEqual(["Frankfurt"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

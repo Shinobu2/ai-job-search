@@ -66,7 +66,7 @@ export function assertReadableGermanSource(
   if (!source.enabled) throw new Error(`${label} source is disabled by workspace policy`);
   if (source.mode !== "read_import_evaluate") throw new Error(`${label} source must use read_import_evaluate mode`);
   if (source.country !== "DE") throw new Error(`${label} source only supports country DE`);
-  if (!["datacenter", "bridge"].includes(source.track)) throw new Error(`${label} source track must be datacenter or bridge`);
+  if (!source.track.trim()) throw new Error(`${label} source track must be non-empty`);
 }
 
 export async function mapBounded<T, R>(

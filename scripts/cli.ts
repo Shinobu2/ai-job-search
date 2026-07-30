@@ -26,7 +26,7 @@ import { isActionableDiscoveryJob, type DiscoveryCounters, type SearchTrack, typ
 import { generateDocumentPacket, hashEvidenceSnapshot } from "../packages/documents/src/generate";
 import { buildAtsDocx, lintAtsDocx } from "../packages/documents/src/ats-docx";
 
-type FlagKey = "id" | "file" | "text" | "status" | "next" | "note" | "confirm" | "dryRun" | "limit" | "strict";
+type FlagKey = "id" | "file" | "text" | "status" | "next" | "note" | "confirm" | "dryRun" | "limit" | "strict" | "track";
 type FlagKind = "string" | "boolean" | "number";
 
 export type CliFlags = {
@@ -40,6 +40,7 @@ export type CliFlags = {
   dryRun?: boolean;
   limit?: number;
   strict?: boolean;
+  track?: string;
 };
 
 const FLAG_DEFINITIONS: Record<FlagKey, { option: string; kind: FlagKind }> = {
@@ -53,6 +54,7 @@ const FLAG_DEFINITIONS: Record<FlagKey, { option: string; kind: FlagKind }> = {
   dryRun: { option: "--dry-run", kind: "boolean" },
   limit: { option: "--limit", kind: "number" },
   strict: { option: "--strict", kind: "boolean" },
+  track: { option: "--track", kind: "string" },
 };
 
 function sha256(value: string | Uint8Array): string {
@@ -63,6 +65,41 @@ function postingWorkingLanguage(rawContent: string): "en" | "de" {
   if (/(?:working language|arbeitssprache)\s*:?\s*(?:german|deutsch)\b/i.test(rawContent)
     && !/\benglish\s+(?:accepted|allowed|sufficient|alternative)\b/i.test(rawContent)) return "de";
   return "en";
+}
+
+export function searchProfileSummary(profile: unknown): string | null {
+  if (!profile || typeof profile !== "object" || Array.isArray(profile)) return null;
+  const profileRecord = profile as Record<string, unknown>;
+  const availability = profileRecord.availability && typeof profileRecord.availability === "object" && !Array.isArray(profileRecord.availability)
+    ? profileRecord.availability as Record<string, unknown>
+    : {};
+  const legal = profileRecord.legal && typeof profileRecord.legal === "object" && !Array.isArray(profileRecord.legal)
+    ? profileRecord.legal as Record<string, unknown>
+    : {};
+  const verifiedValue = (field: unknown): unknown => {
+    if (!field || typeof field !== "object" || Array.isArray(field)) return null;
+    const record = field as Record<string, unknown>;
+    return ["user_confirmed", "document_verified"].includes(String(record.verification_status))
+      ? record.value
+      : null;
+  };
+  const authorizationValue = verifiedValue(legal.work_authorization);
+  const authorization = authorizationValue && typeof authorizationValue === "object" && !Array.isArray(authorizationValue)
+    ? authorizationValue as Record<string, unknown>
+    : {};
+  const verifiedAvailableFrom = verifiedValue(availability.available_from);
+  const availableFrom = typeof verifiedAvailableFrom === "string"
+    ? verifiedAvailableFrom
+    : typeof authorization.available_from === "string" ? authorization.available_from : null;
+  const parts: string[] = [];
+  if (availableFrom) parts.push(`Available from: ${availableFrom}`);
+  if (typeof authorization.basis === "string" && authorization.basis.trim()) {
+    parts.push(`Work authorization: ${authorization.basis}`);
+  }
+  if (typeof authorization.sponsorship_required === "boolean") {
+    parts.push(`Sponsorship required: ${authorization.sponsorship_required ? "yes" : "no"}`);
+  }
+  return parts.length ? parts.join(" · ") : null;
 }
 
 export function parseFlags(arguments_: string[], allowed: readonly FlagKey[], command: string): CliFlags {
@@ -173,27 +210,52 @@ async function runJob(root: string, command: string | undefined, arguments_: str
 
 async function runSearch(root: string, sourceName: string | undefined, arguments_: string[]): Promise<void> {
   if (!sourceName || !["freehire", "jobsuche", "ba", "employers"].includes(sourceName)) throw new Error("Usage: search <freehire|jobsuche|ba|employers>");
-  parseFlags(arguments_, [], `search ${sourceName}`);
-  const tracks: SearchTrack[] = ["datacenter", "bridge"];
-  const trackLabel = (track: SearchTrack) => track === "datacenter" ? "Data centre / IT operations" : "Bridge roles";
+  const flags = parseFlags(arguments_, ["track", "limit", "dryRun"], `search ${sourceName}`);
+  const limit = flags.limit ?? MODEL_REVIEW_LIMIT;
+  if (!Number.isInteger(limit) || limit <= 0) throw new Error("--limit must be a positive integer");
+  const workspace = await loadWorkspace(root);
+  const sources = (workspace.search as { discovery?: { sources?: Array<FreehireSourceConfig | JobsucheSourceConfig> } }).discovery?.sources ?? [];
+  const configuredTracks = [...new Set(sources.map((source) => source.track))];
+  if (configuredTracks.length === 0) throw new Error("workspace/search.yml does not configure any discovery tracks");
+  if (flags.track && !configuredTracks.includes(flags.track)) {
+    throw new Error(`Unknown track: ${flags.track}. Configured tracks: ${configuredTracks.join(", ")}`);
+  }
+  const tracks = flags.track ? [flags.track] : configuredTracks;
+  const profileSummary = searchProfileSummary(workspace.profile);
+  const printTrack = (track: SearchTrack) => console.log(`\nTrack: ${track}`);
   const printJob = (job: {
     title: string; company: string | null; location: string | null; sourceId: string; sourceUrl: string;
     reused: boolean; needs_review: boolean;
   }, index: number, sourceLabel: string) => {
     console.log(`${index}. ${job.title} — ${job.company}`);
     console.log(`Location: ${job.location ?? "unknown"}`);
-    console.log("Старт: 17.08.2026 · §24 permit (no sponsorship)");
+    if (profileSummary) console.log(profileSummary);
     console.log(`Review: ${job.needs_review ? "required" : "ready"}`);
     console.log(`Source: ${sourceLabel} ${job.sourceId} — ${job.sourceUrl}`);
     console.log(`Import: ${job.reused ? "reused" : "created"}\n`);
   };
   if (sourceName === "employers") {
     const registry = await loadEmployerRegistry();
+    if (flags.dryRun) {
+      console.log(`Dry run: search employers | limit=${limit}`);
+      for (const track of tracks) {
+        printTrack(track);
+        const employers = registry.employers.filter((entry) =>
+          entry.track === track
+          && entry.enabled
+          && entry.policy === "public_ats_endpoint"
+          && ["personio", "greenhouse", "lever"].includes(entry.ats));
+        console.log(`Enabled public ATS employers: ${employers.length}`);
+      }
+      console.log("No network requests or persistence were performed.");
+      console.log("No application was submitted.");
+      return;
+    }
     const { db, repository } = openRepository(root);
     try {
       let total = 0;
       for (const track of tracks) {
-        console.log(`\n${trackLabel(track)}`);
+        printTrack(track);
         let index = 1;
         let processed = 0;
         const employers = registry.employers.filter((entry) =>
@@ -202,17 +264,17 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
           && entry.policy === "public_ats_endpoint"
           && ["personio", "greenhouse", "lever"].includes(entry.ats));
         for (const employer of employers) {
+          if (processed >= limit) break;
           try {
-            const workspace = await loadWorkspace(root);
             const discoveryEmployer = { ...employer, cities: registry.cities };
-            const sourceBudget = Math.min(4, MODEL_REVIEW_LIMIT - processed);
+            const sourceBudget = Math.min(4, limit - processed);
             const batch = employer.ats === "greenhouse"
               ? await discoverGreenhouseEmployer(discoveryEmployer, repository, workspace, { maxResults: sourceBudget })
               : employer.ats === "lever"
                 ? await discoverLeverEmployer(discoveryEmployer, repository, workspace, { maxResults: sourceBudget })
                 : await discoverPersonioEmployer(discoveryEmployer, repository, workspace, { maxResults: sourceBudget });
             const atsLabel = employer.ats === "greenhouse" ? "Greenhouse" : employer.ats === "lever" ? "Lever" : "Personio";
-            const reviewJobs = batch.jobs.filter(isActionableDiscoveryJob);
+            const reviewJobs = batch.jobs.filter(isActionableDiscoveryJob).slice(0, limit - processed);
             processed += reviewJobs.length;
             printDiscoveryDiagnostics(`${atsLabel} ${employer.id}`, batch.counters, batch.diagnostics);
             for (const job of reviewJobs) {
@@ -224,14 +286,13 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
             const diagnostic: SourceDiagnostic = { stage: "search", locator: employer.id, code: "employer_failed", message: error instanceof Error ? error.message : String(error), transient: false };
             printDiscoveryDiagnostics(`${employer.ats} ${employer.id}`, { searched: 0, detailed: 0, imported: 0, skipped: 0, failed: 1 }, [diagnostic]);
           }
-          if (processed >= MODEL_REVIEW_LIMIT) break;
         }
       }
       console.log(`Employer results for model review: ${total}`);
       const manual = registry.employers.filter((entry) => entry.enabled && entry.policy === "manual_only");
       console.log("\nTrusted official manual watchlist");
       for (const track of tracks) {
-        console.log(`${trackLabel(track)}:`);
+        console.log(`Track: ${track}`);
         for (const source of manual.filter((entry) => entry.track === track)) {
           const kind = source.source_kind === "agency" ? "agency" : "direct employer";
           console.log(`- ${source.name} [${kind}] — ${source.career_url}`);
@@ -243,23 +304,36 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
       db.close();
     }
   }
-  const workspace = await loadWorkspace(root);
   const sourceId = sourceName === "ba" ? "jobsuche" : sourceName;
-  const sources = (workspace.search as { discovery?: { sources?: Array<FreehireSourceConfig | JobsucheSourceConfig> } }).discovery?.sources ?? [];
-  const configured = sources.filter((candidate) => candidate.id === sourceId && candidate.enabled);
+  const configured = sources.filter((candidate) =>
+    candidate.id === sourceId
+    && candidate.enabled
+    && tracks.includes(candidate.track));
   if (configured.length === 0) throw new Error(`workspace/search.yml does not configure an enabled ${sourceId === "freehire" ? "FreeHire" : "Jobsuche"} source`);
+  if (flags.dryRun) {
+    console.log(`Dry run: search ${sourceName} | limit=${limit}`);
+    for (const track of tracks) {
+      printTrack(track);
+      for (const source of configured.filter((candidate) => candidate.track === track)) {
+        console.log(`- ${source.id}: ${source.keywords.length} keyword(s), ${source.cities.length} city/cities`);
+      }
+    }
+    console.log("No network requests or persistence were performed.");
+    console.log("No application was submitted.");
+    return;
+  }
   const { db, repository } = openRepository(root);
   try {
     for (const track of tracks) {
-      console.log(`\n${trackLabel(track)}`);
+      printTrack(track);
       let index = 1;
       for (const source of configured.filter((candidate) => candidate.track === track)) {
         const jobsuche = source.id === "jobsuche";
         const batch = jobsuche
-          ? await discoverJobsuche(source, repository, workspace, { maxResults: MODEL_REVIEW_LIMIT })
-          : await discoverFreehire(source, repository, workspace, { maxResults: MODEL_REVIEW_LIMIT });
+          ? await discoverJobsuche(source, repository, workspace, { maxResults: limit })
+          : await discoverFreehire(source, repository, workspace, { maxResults: limit });
         const sourceLabel = jobsuche ? "Jobsuche" : "FreeHire";
-        const displayed = batch.jobs.filter(isActionableDiscoveryJob).slice(0, MODEL_REVIEW_LIMIT);
+        const displayed = batch.jobs.filter(isActionableDiscoveryJob).slice(0, limit);
         console.log(`${sourceLabel} ${track} discovered: ${batch.jobs.length} | raw results for model review: ${displayed.length}`);
         printDiscoveryDiagnostics(`${sourceLabel} ${track}`, batch.counters, batch.diagnostics);
         for (const result of displayed) {

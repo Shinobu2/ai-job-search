@@ -51,7 +51,15 @@ test("search schema accepts a read-only Jobsuche source without breaking FreeHir
   })).not.toThrow();
 });
 
-test("search schema requires a datacenter or bridge track", () => {
+test("search schema accepts an arbitrary non-empty track and still requires the field", () => {
+  expect(() => validateWorkspaceFile("search", {
+    schema_version: 1,
+    discovery: { sources: [{
+      id: "freehire", track: "welding", enabled: true, mode: "read_import_evaluate", country: "DE",
+      cities: ["Frankfurt"], keywords: ["Schweisser", "MAG", "WIG"], max_pages: 1, page_size: 5,
+    }] },
+  })).not.toThrow();
+
   expect(() => validateWorkspaceFile("search", {
     schema_version: 1,
     discovery: { sources: [{
@@ -59,6 +67,55 @@ test("search schema requires a datacenter or bridge track", () => {
       cities: ["Frankfurt"], keywords: ["data center technician"], max_pages: 1, page_size: 5,
     }] },
   })).toThrow();
+});
+
+test("search flags select an arbitrary configured track and dry-run without persistence", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "career-control-room-search-dry-run-"));
+  await cp(join(root, "workspace.example"), join(directory, "workspace"), { recursive: true });
+  await writeFile(join(directory, "workspace", "search.yml"), `schema_version: 1
+discovery:
+  sources:
+    - id: freehire
+      track: welding
+      enabled: true
+      mode: read_import_evaluate
+      country: DE
+      cities: [Frankfurt]
+      keywords: [Schweisser, MAG, WIG]
+      max_pages: 1
+      page_size: 5
+    - id: freehire
+      track: support
+      enabled: true
+      mode: read_import_evaluate
+      country: DE
+      cities: [Frankfurt]
+      keywords: [IT Support]
+      max_pages: 1
+      page_size: 5
+`);
+  try {
+    const child = Bun.spawn([
+      process.execPath, cli, "search", "freehire",
+      "--track", "welding", "--limit", "3", "--dry-run",
+    ], { cwd: directory, stdout: "pipe", stderr: "pipe" });
+    expect(await child.exited).toBe(0);
+    expect(await new Response(child.stderr).text()).toBe("");
+    const stdout = await new Response(child.stdout).text();
+    expect(stdout).toContain("Dry run: search freehire");
+    expect(stdout).toContain("Track: welding");
+    expect(stdout).toContain("limit=3");
+    expect(stdout).not.toContain("Track: support");
+    expect(await Bun.file(join(directory, "workspace", "control-room.sqlite")).exists()).toBe(false);
+
+    const invalidLimit = Bun.spawn([
+      process.execPath, cli, "search", "freehire", "--limit", "0", "--dry-run",
+    ], { cwd: directory, stdout: "pipe", stderr: "pipe" });
+    expect(await invalidLimit.exited).toBe(1);
+    expect(await new Response(invalidLimit.stderr).text()).toContain("--limit must be a positive integer");
+  } finally {
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
+  }
 });
 
 test("search freehire prints imported jobs for model review without submission", async () => {
@@ -89,10 +146,10 @@ test("search freehire prints imported jobs for model review without submission",
     expect(await child.exited).toBe(0);
     expect(await new Response(child.stderr).text()).toBe("");
     const stdout = await new Response(child.stdout).text();
-    expect(stdout).toContain("Data centre / IT operations");
-    expect(stdout).toContain("Bridge roles");
+    expect(stdout).toContain("Track: datacenter");
+    expect(stdout).toContain("Track: bridge");
     expect(stdout).toContain("1. Data Center Technician — Fixture DC");
-    expect(stdout).toContain("Старт: 17.08.2026 · §24 permit (no sponsorship)");
+    expect(stdout).not.toContain("Старт: 17.08.2026 · §24 permit (no sponsorship)");
     expect(stdout).toContain("[detail] http_503 fixture-failed");
     expect(stdout).toContain("Data Center Technician — Fixture DC");
     expect(stdout).not.toContain("Warehouse Operative");
@@ -174,7 +231,7 @@ test("search jobsuche prints imported jobs for model review without submission",
     expect(await child.exited).toBe(0);
     expect(await new Response(child.stderr).text()).toBe("");
     const stdout = await new Response(child.stdout).text();
-    expect(stdout).toContain("Data centre / IT operations");
+    expect(stdout).toContain("Track: datacenter");
     expect(stdout).toContain("Jobsuche datacenter discovered: 1 | raw results for model review: 1");
     expect(stdout).toContain("Counters: searched=1 detailed=1 imported=1 skipped=0 failed=0");
     expect(stdout).toContain("Data Center Technician — Fixture DC");

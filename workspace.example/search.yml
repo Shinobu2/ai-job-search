@@ -83,3 +83,14 @@ discovery:
       include_temporary_work: true
       max_pages: 1
       page_size: 10
+    # Tracks are arbitrary profession labels. This disabled example shows how
+    # to add a separate welding search without changing application code.
+    - id: freehire
+      track: welding
+      enabled: false
+      mode: read_import_evaluate
+      country: DE
+      cities: [Frankfurt]
+      keywords: [Schweisser, MAG, WIG]
+      max_pages: 1
+      page_size: 10

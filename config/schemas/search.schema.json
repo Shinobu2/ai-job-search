@@ -17,7 +17,7 @@
             "required": ["id", "track", "enabled", "mode", "country", "cities", "keywords", "max_pages", "page_size"],
             "properties": {
               "id": { "enum": ["freehire", "jobsuche"] },
-              "track": { "enum": ["datacenter", "bridge"] },
+              "track": { "type": "string", "minLength": 1 },
               "enabled": { "type": "boolean" },
               "mode": { "const": "read_import_evaluate" },
               "country": { "const": "DE" },
