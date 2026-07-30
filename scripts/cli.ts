@@ -26,7 +26,34 @@ import { isActionableDiscoveryJob, type DiscoveryCounters, type SearchTrack, typ
 import { generateDocumentPacket, hashEvidenceSnapshot } from "../packages/documents/src/generate";
 import { buildAtsDocx, lintAtsDocx } from "../packages/documents/src/ats-docx";
 
-type JobFlags = { id?: string; file?: string; text?: string; status?: string; next?: string; note?: string; confirm?: string };
+type FlagKey = "id" | "file" | "text" | "status" | "next" | "note" | "confirm" | "dryRun" | "limit" | "strict";
+type FlagKind = "string" | "boolean" | "number";
+
+export type CliFlags = {
+  id?: string;
+  file?: string;
+  text?: string;
+  status?: string;
+  next?: string;
+  note?: string;
+  confirm?: boolean;
+  dryRun?: boolean;
+  limit?: number;
+  strict?: boolean;
+};
+
+const FLAG_DEFINITIONS: Record<FlagKey, { option: string; kind: FlagKind }> = {
+  id: { option: "--id", kind: "string" },
+  file: { option: "--file", kind: "string" },
+  text: { option: "--text", kind: "string" },
+  status: { option: "--status", kind: "string" },
+  next: { option: "--next", kind: "string" },
+  note: { option: "--note", kind: "string" },
+  confirm: { option: "--confirm", kind: "boolean" },
+  dryRun: { option: "--dry-run", kind: "boolean" },
+  limit: { option: "--limit", kind: "number" },
+  strict: { option: "--strict", kind: "boolean" },
+};
 
 function sha256(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
@@ -38,24 +65,36 @@ function postingWorkingLanguage(rawContent: string): "en" | "de" {
   return "en";
 }
 
-function parseFlags(arguments_: string[]): JobFlags {
-  const flags: JobFlags = {};
-  for (let index = 0; index < arguments_.length; index += 2) {
-    const flag = arguments_[index];
-    if (!flag?.startsWith("--")) throw new Error(`Unknown argument: ${flag ?? ""}`);
-    const key = flag.slice(2) as keyof JobFlags;
-    if (!(key in { id: true, file: true, text: true, status: true, next: true, note: true, confirm: true })) throw new Error(`Unknown flag: ${flag}`);
+export function parseFlags(arguments_: string[], allowed: readonly FlagKey[], command: string): CliFlags {
+  const flags: Record<string, string | number | boolean> = {};
+  const allowedOptions = allowed.map((key) => FLAG_DEFINITIONS[key].option);
+  const allowedMessage = allowedOptions.length ? allowedOptions.join(", ") : "(none)";
+  for (let index = 0; index < arguments_.length;) {
+    const option = arguments_[index];
+    if (!option?.startsWith("--")) {
+      throw new Error(`Unknown argument ${option ?? ""} for ${command}. Allowed flags: ${allowedMessage}`);
+    }
+    const key = allowed.find((candidate) => FLAG_DEFINITIONS[candidate].option === option);
+    if (!key) throw new Error(`Unknown flag ${option} for ${command}. Allowed flags: ${allowedMessage}`);
+    if (flags[key] !== undefined) throw new Error(`${option} may only be provided once`);
+    const definition = FLAG_DEFINITIONS[key];
+    if (definition.kind === "boolean") {
+      flags[key] = true;
+      index += 1;
+      continue;
+    }
     const value = arguments_[index + 1];
-    if (!value || value.startsWith("--")) throw new Error(`${flag} requires a value`);
-    if (flags[key] !== undefined) throw new Error(`${flag} may only be provided once`);
-    flags[key] = value;
+    if (!value || value.startsWith("--")) throw new Error(`${option} requires a value`);
+    if (definition.kind === "number") {
+      const numericValue = Number(value);
+      if (!Number.isFinite(numericValue)) throw new Error(`${option} requires a number`);
+      flags[key] = numericValue;
+    } else {
+      flags[key] = value;
+    }
+    index += 2;
   }
-  return flags;
-}
-
-function requireOnly(flags: JobFlags, allowed: Array<keyof JobFlags>, command: string): void {
-  const invalid = Object.keys(flags).find((key) => !allowed.includes(key as keyof JobFlags));
-  if (invalid) throw new Error(`--${invalid} is not supported by job ${command}`);
+  return flags as CliFlags;
 }
 
 function openRepository(root: string): { db: ReturnType<typeof openDatabase>; repository: StorageRepository } {
@@ -85,23 +124,28 @@ async function evaluateJob(root: string, repository: StorageRepository, jobId: s
 
 async function runJob(root: string, command: string | undefined, arguments_: string[]): Promise<void> {
   if (!command) throw new Error("Usage: job <import|evaluate|export|check>");
-  const flags = parseFlags(arguments_);
+  const allowedByCommand: Record<string, readonly FlagKey[]> = {
+    import: ["file", "text"],
+    evaluate: ["id"],
+    export: ["id"],
+    check: ["file", "text"],
+  };
+  const allowed = allowedByCommand[command];
+  if (!allowed) throw new Error(`Unknown job command: ${command}`);
+  const flags = parseFlags(arguments_, allowed, `job ${command}`);
   const { db, repository } = openRepository(root);
   try {
     if (command === "import") {
-      requireOnly(flags, ["file", "text"], command);
       if ((flags.file === undefined) === (flags.text === undefined)) throw new Error("Provide exactly one of --file or --text");
       console.log(JSON.stringify(await importVacancy({ file: flags.file, text: flags.text }, repository), null, 2));
       return;
     }
     if (command === "evaluate") {
-      requireOnly(flags, ["id"], command);
       if (!flags.id) throw new Error("job evaluate requires --id");
       console.log(JSON.stringify(await evaluateJob(root, repository, flags.id), null, 2));
       return;
     }
     if (command === "export") {
-      requireOnly(flags, ["id"], command);
       if (!flags.id) throw new Error("job export requires --id");
       const result = repository.readEvaluation(flags.id);
       if (!result) throw new Error(`No evaluation exists for job ID: ${flags.id}`);
@@ -112,7 +156,6 @@ async function runJob(root: string, command: string | undefined, arguments_: str
       return;
     }
     if (command === "check") {
-      requireOnly(flags, ["file", "text"], command);
       if ((flags.file === undefined) === (flags.text === undefined)) throw new Error("Provide exactly one of --file or --text");
       const imported = await importVacancy({ file: flags.file, text: flags.text }, repository);
       const result = await evaluateJob(root, repository, imported.id);
@@ -129,7 +172,8 @@ async function runJob(root: string, command: string | undefined, arguments_: str
 }
 
 async function runSearch(root: string, sourceName: string | undefined, arguments_: string[]): Promise<void> {
-  if (!sourceName || arguments_.length > 0 || !["freehire", "jobsuche", "ba", "employers"].includes(sourceName)) throw new Error("Usage: search <freehire|jobsuche|ba|employers>");
+  if (!sourceName || !["freehire", "jobsuche", "ba", "employers"].includes(sourceName)) throw new Error("Usage: search <freehire|jobsuche|ba|employers>");
+  parseFlags(arguments_, [], `search ${sourceName}`);
   const tracks: SearchTrack[] = ["datacenter", "bridge"];
   const trackLabel = (track: SearchTrack) => track === "datacenter" ? "Data centre / IT operations" : "Bridge roles";
   const printJob = (job: {
@@ -248,8 +292,7 @@ function printDiscoveryDiagnostics(label: string, counters: DiscoveryCounters, d
 
 async function runDocuments(root: string, command: string | undefined, arguments_: string[]): Promise<void> {
   if (command !== "generate") throw new Error("Usage: documents generate --id <job-id>");
-  const flags = parseFlags(arguments_);
-  requireOnly(flags, ["id"], "documents generate");
+  const flags = parseFlags(arguments_, ["id"], "documents generate");
   if (!flags.id) throw new Error("documents generate requires --id");
   const workspace = await loadWorkspace(root);
   const { db, repository } = openRepository(root);
@@ -336,22 +379,26 @@ async function runDocuments(root: string, command: string | undefined, arguments
 }
 
 async function runApplications(root: string, command: string | undefined, arguments_: string[]): Promise<void> {
-  const flags = parseFlags(arguments_);
+  const allowedByCommand: Record<string, readonly FlagKey[]> = {
+    list: [],
+    history: ["id"],
+    prepare: ["id", "file"],
+    set: ["id", "status", "next", "note", "confirm"],
+  };
+  if (!command || !allowedByCommand[command]) throw new Error("Usage: applications <set|list|history|prepare>");
+  const flags = parseFlags(arguments_, allowedByCommand[command], `applications ${command}`);
   const { db, repository } = openRepository(root);
   try {
     if (command === "list") {
-      if (arguments_.length) throw new Error("applications list takes no flags");
       console.log(JSON.stringify(repository.listApplications(), null, 2));
       return;
     }
     if (command === "history") {
-      requireOnly(flags, ["id"], "applications history");
       if (!flags.id) throw new Error("applications history requires --id");
       console.log(JSON.stringify(repository.listApplicationEvents(flags.id), null, 2));
       return;
     }
     if (command === "prepare") {
-      requireOnly(flags, ["id", "file"], "applications prepare");
       if (!flags.id || !flags.file) throw new Error("applications prepare requires --id and --file");
       const packet = repository.readCurrentDocumentPacket(flags.id);
       if (!packet) throw new Error(`Application ${flags.id} requires a current document packet`);
@@ -373,11 +420,10 @@ async function runApplications(root: string, command: string | undefined, argume
       return;
     }
     if (command === "set") {
-      requireOnly(flags, ["id", "status", "next", "note", "confirm"], "applications set");
       const statuses = ["shortlisted", "ready_for_review", "user_submitted", "interview", "offer", "rejected", "withdrawn"] as const;
       if (!flags.id || !flags.status || !statuses.includes(flags.status as ApplicationStatus)) throw new Error(`applications set requires --id and --status (${statuses.join("|")})`);
       const status = flags.status as ApplicationStatus;
-      const explicitlyConfirmed = flags.confirm === "yes";
+      const explicitlyConfirmed = flags.confirm === true;
       console.log(JSON.stringify(repository.setApplicationStatus(flags.id, status, { nextAction: flags.next, note: flags.note, actor: explicitlyConfirmed ? "user_confirmed_cli" : "user", confirmed: explicitlyConfirmed }), null, 2));
       return;
     }
@@ -385,8 +431,9 @@ async function runApplications(root: string, command: string | undefined, argume
   } finally { db.close(); }
 }
 
-async function runReport(root: string, command: string | undefined): Promise<void> {
+async function runReport(root: string, command: string | undefined, arguments_: string[]): Promise<void> {
   if (command !== "daily") throw new Error("Usage: report daily");
+  parseFlags(arguments_, [], "report daily");
   const { db, repository } = openRepository(root);
   try {
     const date = new Date().toISOString().slice(0, 10);
@@ -417,16 +464,19 @@ async function runReport(root: string, command: string | undefined): Promise<voi
 async function main(): Promise<void> {
   const [command, ...arguments_] = process.argv.slice(2);
   if (command === "setup") {
+    parseFlags(arguments_, [], "setup");
     console.log(JSON.stringify(await setupWorkspace(process.cwd()), null, 2));
     return;
   }
   if (command === "doctor") {
-    const report = await runDoctor(process.cwd(), arguments_.includes("--strict"));
+    const flags = parseFlags(arguments_, ["strict"], "doctor");
+    const report = await runDoctor(process.cwd(), flags.strict === true);
     console.log(JSON.stringify(report, null, 2));
     process.exitCode = report.errors.length ? 1 : 0;
     return;
   }
   if (command === "capabilities") {
+    parseFlags(arguments_, [], "capabilities");
     const db = openDatabase(join(process.cwd(), "workspace", "control-room.sqlite"));
     try {
       migrate(db);
@@ -455,14 +505,16 @@ async function main(): Promise<void> {
     await runApplications(process.cwd(), arguments_[0], arguments_.slice(1)); return;
   }
   if (command === "report") {
-    await runReport(process.cwd(), arguments_[0]); return;
+    await runReport(process.cwd(), arguments_[0], arguments_.slice(1)); return;
   }
   throw new Error("Usage: bun run scripts/cli.ts <setup|doctor|capabilities|job|search|documents|applications|report>");
 }
 
-try {
-  await main();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
+if (import.meta.main) {
+  try {
+    await main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }
