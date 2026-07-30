@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -107,6 +107,59 @@ test("job commands reject malformed flags and unknown job IDs clearly", async ()
     expect(unknown.exitCode).toBe(1);
     expect(unknown.stderr).toContain("Unknown job ID: job_missing");
   } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("job import accepts one URL or a newline-delimited URL file without changing --file", async () => {
+  const directory = await workspace();
+  const greenhouse = await readFile(join(root, "tests", "fixtures", "url-import", "greenhouse.html"), "utf8");
+  const fallback = await readFile(join(root, "tests", "fixtures", "url-import", "no-json-ld.html"), "utf8");
+  const server = Bun.serve({
+    port: 0,
+    fetch(request) {
+      const path = new URL(request.url).pathname;
+      if (path === "/robots.txt") return new Response("User-agent: *\nDisallow:", { headers: { "content-type": "text/plain" } });
+      if (path === "/structured") return new Response(greenhouse, { headers: { "content-type": "text/html" } });
+      if (path === "/fallback") return new Response(fallback, { headers: { "content-type": "text/html" } });
+      return new Response("not found", { status: 404 });
+    },
+  });
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+    const fromUrl = outputJson<{ title: string; importSource: string }>(
+      await run(directory, "job", "import", "--url", `${base}/structured?utm_source=cli-test`),
+    );
+    expect(fromUrl).toMatchObject({ title: "Data Center Technician", importSource: "json-ld" });
+
+    const urls = join(directory, "urls.txt");
+    await writeFile(urls, `${base}/structured\n\n${base}/fallback\n`, "utf8");
+    const fromUrlFile = outputJson<Array<{ title: string; importSource: string }>>(
+      await run(directory, "job", "import", "--url-file", urls),
+    );
+    expect(fromUrlFile).toEqual([
+      expect.objectContaining({ title: "Data Center Technician", importSource: "json-ld" }),
+      expect.objectContaining({ title: "Fallback Support Technician", importSource: "model-fallback" }),
+    ]);
+
+    const fromFile = outputJson<{ title: string }>(
+      await run(directory, "job", "import", "--file", join(directory, "fixtures", "dct-trainee.md")),
+    );
+    expect(fromFile.title).toBe("Data Center Technician Trainee");
+
+    const ambiguous = await run(
+      directory,
+      "job",
+      "import",
+      "--url",
+      `${base}/structured`,
+      "--text",
+      "Title: Ambiguous",
+    );
+    expect(ambiguous.exitCode).toBe(1);
+    expect(ambiguous.stderr).toContain("Provide exactly one");
+  } finally {
+    server.stop(true);
     await rm(directory, { recursive: true, force: true });
   }
 });

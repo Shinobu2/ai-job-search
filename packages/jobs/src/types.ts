@@ -4,6 +4,11 @@ export type ImportRequest = {
   sourceUrl?: string;
   sourceId?: string;
   sourceType?: string;
+  identity?: {
+    title: string | null;
+    company: string | null;
+    location: string | null;
+  };
 };
 
 export type DiscoveryImportOptions = {

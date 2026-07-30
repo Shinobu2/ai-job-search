@@ -14,6 +14,7 @@ import { prepareApplicationAnswerMatrix } from "../packages/core/src/application
 import { extractVacancy } from "../packages/jobs/src/extract";
 import { buildEvaluationInput, evaluateVacancy } from "../packages/jobs/src/evaluate";
 import { importVacancy } from "../packages/jobs/src/import";
+import { importVacancyFromUrl } from "../packages/jobs/src/url-import";
 import { renderResultCard } from "../packages/jobs/src/card";
 import { StorageRepository, type ApplicationStatus, type DocumentPacketRecord, type StoredJob } from "../packages/storage/src/repository";
 import { discoverFreehire, type FreehireSourceConfig } from "../packages/search/src/freehire";
@@ -26,13 +27,15 @@ import { emptyCounters, isActionableDiscoveryJob, type DiscoveryBatch, type Disc
 import { generateDocumentPacket, hashEvidenceSnapshot } from "../packages/documents/src/generate";
 import { buildAtsDocx, lintAtsDocx } from "../packages/documents/src/ats-docx";
 
-type FlagKey = "id" | "file" | "text" | "status" | "next" | "note" | "confirm" | "dryRun" | "limit" | "strict" | "track";
+type FlagKey = "id" | "file" | "text" | "url" | "urlFile" | "status" | "next" | "note" | "confirm" | "dryRun" | "limit" | "strict" | "track";
 type FlagKind = "string" | "boolean" | "number";
 
 export type CliFlags = {
   id?: string;
   file?: string;
   text?: string;
+  url?: string;
+  urlFile?: string;
   status?: string;
   next?: string;
   note?: string;
@@ -47,6 +50,8 @@ const FLAG_DEFINITIONS: Record<FlagKey, { option: string; kind: FlagKind }> = {
   id: { option: "--id", kind: "string" },
   file: { option: "--file", kind: "string" },
   text: { option: "--text", kind: "string" },
+  url: { option: "--url", kind: "string" },
+  urlFile: { option: "--url-file", kind: "string" },
   status: { option: "--status", kind: "string" },
   next: { option: "--next", kind: "string" },
   note: { option: "--note", kind: "string" },
@@ -162,7 +167,7 @@ async function evaluateJob(root: string, repository: StorageRepository, jobId: s
 async function runJob(root: string, command: string | undefined, arguments_: string[]): Promise<void> {
   if (!command) throw new Error("Usage: job <import|evaluate|export|check>");
   const allowedByCommand: Record<string, readonly FlagKey[]> = {
-    import: ["file", "text"],
+    import: ["file", "text", "url", "urlFile"],
     evaluate: ["id"],
     export: ["id"],
     check: ["file", "text"],
@@ -173,7 +178,24 @@ async function runJob(root: string, command: string | undefined, arguments_: str
   const { db, repository } = openRepository(root);
   try {
     if (command === "import") {
-      if ((flags.file === undefined) === (flags.text === undefined)) throw new Error("Provide exactly one of --file or --text");
+      const inputs = [flags.file, flags.text, flags.url, flags.urlFile].filter((value) => value !== undefined);
+      if (inputs.length !== 1) throw new Error("Provide exactly one of --file, --text, --url, or --url-file");
+      if (flags.url !== undefined) {
+        console.log(JSON.stringify(await importVacancyFromUrl(flags.url, repository), null, 2));
+        return;
+      }
+      if (flags.urlFile !== undefined) {
+        const urls = (await readFile(flags.urlFile, "utf8"))
+          .replace(/^\ufeff/, "")
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean);
+        if (urls.length === 0) throw new Error(`URL file contains no URLs: ${flags.urlFile}`);
+        const imported = [];
+        for (const url of urls) imported.push(await importVacancyFromUrl(url, repository));
+        console.log(JSON.stringify(imported, null, 2));
+        return;
+      }
       console.log(JSON.stringify(await importVacancy({ file: flags.file, text: flags.text }, repository), null, 2));
       return;
     }
