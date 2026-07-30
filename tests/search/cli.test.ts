@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { validateWorkspaceFile } from "../../packages/core/src/workspace";
@@ -11,6 +11,7 @@ const cli = join(root, "scripts", "cli.ts");
 const freehireFetchFixture = join(root, "tests", "search", "freehire-fetch.fixture.ts");
 const jobsucheFetchFixture = join(root, "tests", "search", "jobsuche-fetch.fixture.ts");
 const personioFetchFixture = join(root, "tests", "search", "personio-fetch.fixture.ts");
+const allFetchFixture = join(root, "tests", "search", "all-fetch.fixture.ts");
 
 function payload(job: unknown) {
   return new Response(JSON.stringify({ data: job }), { headers: { "content-type": "application/json" } });
@@ -299,6 +300,114 @@ test("search employers reports a source outage and still prints the no-submit gu
     expect(stdout).toContain("[search] http_503 maincubes");
     expect(stdout).toContain("Employer results for model review: 0");
     expect(stdout.trim().endsWith("No application was submitted.")).toBe(true);
+  } finally {
+    server.stop(true);
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
+  }
+});
+
+test("search all aggregates enabled batch counters and maps success, partial, and failed exits", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "career-control-room-search-all-"));
+  await cp(join(root, "workspace.example"), join(directory, "workspace"), { recursive: true });
+  await writeFile(join(directory, "workspace", "search.yml"), `schema_version: 1
+discovery:
+  sources:
+    - id: freehire
+      track: datacenter
+      enabled: true
+      mode: read_import_evaluate
+      country: DE
+      cities: [Frankfurt]
+      keywords: [data center technician]
+      max_pages: 1
+      page_size: 5
+    - id: jobsuche
+      track: datacenter
+      enabled: true
+      mode: read_import_evaluate
+      country: DE
+      cities: [Frankfurt]
+      keywords: [data center technician]
+      radius_km: 80
+      published_within_days: 14
+      working_time: [vz]
+      max_pages: 1
+      page_size: 5
+`);
+  const first = {
+    public_slug: "all-one",
+    title: "Data Center Technician",
+    company: "Fixture DC",
+    location: "Frankfurt, Germany",
+    url: "https://jobs.example/all-one",
+    description: "Skills: hardware replacement",
+    skills: ["Hardware"],
+    regions: ["eu"],
+    countries: ["DE"],
+    cities: ["Frankfurt"],
+    posted_at: "2026-07-12",
+    created_at: "2026-07-12",
+    enrichment: {},
+  };
+  const second = { ...first, public_slug: "all-two", url: "https://jobs.example/all-two" };
+  let mode: "partial" | "failed" | "success" = "partial";
+  const server = Bun.serve({
+    port: 0,
+    fetch(request) {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith("/jobs/search")) {
+        if (mode === "failed") return new Response("{invalid", { headers: { "content-type": "application/json" } });
+        return payload(mode === "partial" ? [first, second] : []);
+      }
+      if (path.endsWith("/all-one")) return payload(first);
+      if (path.endsWith("/jobs")) return new Response(JSON.stringify({ stellenangebote: [] }), { headers: { "content-type": "application/json" } });
+      return new Response("not found", { status: 404 });
+    },
+  });
+  const runAll = async () => {
+    const child = Bun.spawn([
+      process.execPath, "--preload", allFetchFixture, cli,
+      "search", "all", "--limit", "1",
+    ], {
+      cwd: directory,
+      env: {
+        ...process.env,
+        FREEHIRE_TEST_ENDPOINT: server.url.toString(),
+        JOBSUCHE_TEST_ENDPOINT: server.url.toString(),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return {
+      exitCode: await child.exited,
+      stdout: await new Response(child.stdout).text(),
+      stderr: await new Response(child.stderr).text(),
+    };
+  };
+  try {
+    const partial = await runAll();
+    expect(partial.exitCode).toBe(2);
+    expect(partial.stderr).toBe("");
+    expect(partial.stdout).toContain("| Source | Track | Status | Searched | Detailed | Imported | Skipped | Failed |");
+    expect(partial.stdout).toContain("| freehire:datacenter | datacenter | partial | 1 | 1 | 1 | 0 | 0 |");
+    expect(partial.stdout).toContain("| jobsuche:datacenter | datacenter | success | 1 | 0 | 0 | 0 | 0 |");
+    expect(partial.stdout).toContain("| TOTAL | - | partial | 2 | 1 | 1 | 0 | 0 |");
+
+    mode = "failed";
+    const failed = await runAll();
+    expect(failed.exitCode).toBe(1);
+    expect(failed.stderr).toBe("");
+    expect(failed.stdout).toContain("| freehire:datacenter | datacenter | failed | 1 | 0 | 0 | 0 | 1 |");
+    expect(failed.stdout).toContain("| TOTAL | - | failed | 2 | 0 | 0 | 0 | 1 |");
+
+    mode = "success";
+    const success = await runAll();
+    expect(success.exitCode).toBe(0);
+    expect(success.stderr).toBe("");
+    expect(success.stdout).toContain("| TOTAL | - | success | 2 | 0 | 0 | 0 | 0 |");
+
+    const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as { scripts: Record<string, string> };
+    expect(packageJson.scripts["search:all"]).toBe("bun run scripts/cli.ts search all");
   } finally {
     server.stop(true);
     await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });

@@ -22,7 +22,7 @@ import { loadEmployerRegistry } from "../packages/search/src/employer-registry";
 import { discoverPersonioEmployer } from "../packages/search/src/personio";
 import { discoverGreenhouseEmployer } from "../packages/search/src/greenhouse";
 import { discoverLeverEmployer } from "../packages/search/src/lever";
-import { isActionableDiscoveryJob, type DiscoveryCounters, type SearchTrack, type SourceDiagnostic } from "../packages/search/src/types";
+import { emptyCounters, isActionableDiscoveryJob, type DiscoveryBatch, type DiscoveryCounters, type DiscoveryStatus, type SearchTrack, type SourceDiagnostic } from "../packages/search/src/types";
 import { generateDocumentPacket, hashEvidenceSnapshot } from "../packages/documents/src/generate";
 import { buildAtsDocx, lintAtsDocx } from "../packages/documents/src/ats-docx";
 
@@ -209,7 +209,7 @@ async function runJob(root: string, command: string | undefined, arguments_: str
 }
 
 async function runSearch(root: string, sourceName: string | undefined, arguments_: string[]): Promise<void> {
-  if (!sourceName || !["freehire", "jobsuche", "ba", "employers"].includes(sourceName)) throw new Error("Usage: search <freehire|jobsuche|ba|employers>");
+  if (!sourceName || !["all", "freehire", "jobsuche", "ba", "employers"].includes(sourceName)) throw new Error("Usage: search <all|freehire|jobsuche|ba|employers>");
   const flags = parseFlags(arguments_, ["track", "limit", "dryRun"], `search ${sourceName}`);
   const limit = flags.limit ?? MODEL_REVIEW_LIMIT;
   if (!Number.isInteger(limit) || limit <= 0) throw new Error("--limit must be a positive integer");
@@ -234,6 +234,65 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
     console.log(`Source: ${sourceLabel} ${job.sourceId} — ${job.sourceUrl}`);
     console.log(`Import: ${job.reused ? "reused" : "created"}\n`);
   };
+  const discoverConfiguredSource = (
+    source: FreehireSourceConfig | JobsucheSourceConfig,
+    repository: StorageRepository,
+  ): Promise<DiscoveryBatch> => source.id === "jobsuche"
+    ? discoverJobsuche(source, repository, workspace, { maxResults: limit })
+    : discoverFreehire(source, repository, workspace, { maxResults: limit });
+  if (sourceName === "all") {
+    const configured = sources.filter((source) => source.enabled && tracks.includes(source.track));
+    if (configured.length === 0) throw new Error("workspace/search.yml does not configure any enabled discovery sources");
+    if (flags.dryRun) {
+      console.log(`Dry run: search all | limit=${limit}`);
+      for (const source of configured) {
+        console.log(`- ${source.id}:${source.track} | ${source.keywords.length} keyword(s) | ${source.cities.length} city/cities`);
+      }
+      console.log("No network requests or persistence were performed.");
+      console.log("No application was submitted.");
+      return;
+    }
+    const { db, repository } = openRepository(root);
+    const batches: DiscoveryBatch[] = [];
+    try {
+      for (const source of configured) {
+        printTrack(source.track);
+        let batch: DiscoveryBatch;
+        try {
+          batch = await discoverConfiguredSource(source, repository);
+        } catch (error) {
+          const diagnostic: SourceDiagnostic = {
+            stage: "search",
+            locator: `${source.id}:${source.track}`,
+            code: "source_failed",
+            message: error instanceof Error ? error.message : String(error),
+            transient: false,
+          };
+          batch = {
+            sourceId: `${source.id}:${source.track}`,
+            track: source.track,
+            status: "failed",
+            scope: { planned: 1, completed: 0, failed: 1 },
+            jobs: [],
+            counters: { searched: 0, detailed: 0, imported: 0, skipped: 0, failed: 1 },
+            diagnostics: [diagnostic],
+          };
+        }
+        batches.push(batch);
+        const sourceLabel = source.id === "jobsuche" ? "Jobsuche" : "FreeHire";
+        const displayed = batch.jobs.filter(isActionableDiscoveryJob).slice(0, limit);
+        console.log(`${sourceLabel} ${source.track} status: ${batch.status} | discovered: ${batch.jobs.length} | raw results for model review: ${displayed.length}`);
+        printDiscoveryDiagnostics(`${sourceLabel} ${source.track}`, batch.counters, batch.diagnostics);
+        displayed.forEach((job, index) => printJob(job, index + 1, sourceLabel));
+      }
+    } finally {
+      db.close();
+    }
+    printSearchAllSummary(batches);
+    process.exitCode = searchAllExitCode(batches.map((batch) => batch.status));
+    console.log("No application was submitted.");
+    return;
+  }
   if (sourceName === "employers") {
     const registry = await loadEmployerRegistry();
     if (flags.dryRun) {
@@ -329,9 +388,7 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
       let index = 1;
       for (const source of configured.filter((candidate) => candidate.track === track)) {
         const jobsuche = source.id === "jobsuche";
-        const batch = jobsuche
-          ? await discoverJobsuche(source, repository, workspace, { maxResults: limit })
-          : await discoverFreehire(source, repository, workspace, { maxResults: limit });
+        const batch = await discoverConfiguredSource(source, repository);
         const sourceLabel = jobsuche ? "Jobsuche" : "FreeHire";
         const displayed = batch.jobs.filter(isActionableDiscoveryJob).slice(0, limit);
         console.log(`${sourceLabel} ${track} discovered: ${batch.jobs.length} | raw results for model review: ${displayed.length}`);
@@ -346,6 +403,34 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
   } finally {
     db.close();
   }
+}
+
+export function searchAllExitCode(statuses: DiscoveryStatus[]): 0 | 1 | 2 {
+  if (statuses.includes("failed")) return 1;
+  if (statuses.includes("partial")) return 2;
+  return 0;
+}
+
+function printSearchAllSummary(batches: DiscoveryBatch[]): void {
+  const total = emptyCounters();
+  for (const batch of batches) {
+    total.searched += batch.counters.searched;
+    total.detailed += batch.counters.detailed;
+    total.imported += batch.counters.imported;
+    total.skipped += batch.counters.skipped;
+    total.failed += batch.counters.failed;
+  }
+  const aggregateStatus: DiscoveryStatus = batches.some((batch) => batch.status === "failed")
+    ? "failed"
+    : batches.some((batch) => batch.status === "partial") ? "partial" : "success";
+  console.log("\nSearch all summary");
+  console.log("| Source | Track | Status | Searched | Detailed | Imported | Skipped | Failed |");
+  console.log("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |");
+  for (const batch of batches) {
+    const counters = batch.counters;
+    console.log(`| ${batch.sourceId} | ${batch.track} | ${batch.status} | ${counters.searched} | ${counters.detailed} | ${counters.imported} | ${counters.skipped} | ${counters.failed} |`);
+  }
+  console.log(`| TOTAL | - | ${aggregateStatus} | ${total.searched} | ${total.detailed} | ${total.imported} | ${total.skipped} | ${total.failed} |`);
 }
 
 const MODEL_REVIEW_LIMIT = 12;
