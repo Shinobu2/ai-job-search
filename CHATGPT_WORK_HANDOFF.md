@@ -34,30 +34,47 @@ answers.
   production are excluded. The configured salary floor is emergency-only;
   prioritize stronger credible offers.
 
-## Current application status (2026-07-25)
+## Current application status
 
-Submitted / waiting:
+<!-- generated:status:start -->
+### Generated tracker status
 
-- Tokyo Electron — Field Service Engineer CT, Dresden — R26-00491.
-- PŸUR — NOC Operator, Leipzig.
-- Amazon — Data Center Operations Technician — 3123915.
-- Verda — Junior Data Center Technician.
-- 23M.
-- EOS IT Solutions.
-- OVHcloud.
-- Adecco.
-- Titanicom.
-- erasys.
-- Impossible Cloud.
-- Hornetsecurity — Technical Support Specialist 1st/2nd Level.
+- Status counts: interview: 1 · rejected: 7 · shortlisted: 12 · user\_submitted: 11
 
-Rejected or closed:
+Companies and vacancy numbers:
 
-- Amazon IT Specialist — 10421933.
-- Leaseweb.
-- YER / Mamgo.
-- Microsoft Data Center Technician.
-- AWS Trainee — old posting unavailable.
+- Adecco — `job_fed24c28caca5393c765aa7d4bd6aa6b7d39f3fd0e433923d3d83970f1e87758`
+- Amazon — `jobsuche:13644-309079-S`
+- Amazon — `jobsuche:13644-309081-S`
+- Amazon Web Services — `job_e7c591cbdc7352d6832b2f452bd93761676192bc9005086efa04086c13ab1835`
+- Amazon Web Services — `job_f9c09124ef86a66d56c744993260dd5895f8e31a2cae9af3345a119a8af724f5`
+- BCLP — `job_f01e82c3e1d653ae56177c00c067735677180e1be572035798b83c6418f6fdae`
+- Cofinity-X GmbH — `job_d293f33bdc9e60c696b528e859840f0fc2a89ce2f32fc8524562ca015caa5a44`
+- Collectors — `job_044bbc3c77e3a12d4f496062be0182e80e883f8337301b992aceb81b7ead4863`
+- Creativ Personaldienstleistungen GmbH — `job_841a4d10e46ddaa67c4a37ee640ef0b8d38055b50d76af49ba60ac62c8e3255e`
+- DSP IT Service — `personio:dsp-it-service:2465156`
+- erasys building ROMEO — `job_44abe8968e67f69beea5aa60e787131c0463b51b067c71bedbbf061d86dd65d9`
+- Expert Select GmbH — `job_06df26faa33cefc942fcc79382790560ff70a1de2b3cc5f8bb06c105c902d77b`
+- I. K. Hofmann — `job_075a852dd966677bd807e741a593ce231797b0d7d9823057a6ba0fdf17e76108`
+- Impossible Cloud — `job_dcd4a1dbf342f5ed7086d93f505d4a82bb25060e5df019f011c87b6984266de4`
+- INEOS Styrolution — `job_8e32074f8caf8d5b949276603979367227d5515f822cb490e382a711d635abb9`
+- Leaseweb — `job_62eb1854403333863cc75172f476fec7fc74c9563276db51b6240a16af54ed50`
+- Microsoft — `freehire:data-center-technician-microsoft-fwbxbs6b`
+- NConsult — `job_89c6c41a2f8304486b529c8694b8dfbf12311454fa044a3bdeafa7571ffc4e59`
+- Titanicom Tech Limited — `job_95ef52bfbeb2e91af6f753c316b6935c3a2cbe87bc992aec6ad2b43cdf6867e1`
+- Unknown company — `job_23c2ab007e381bc6c08b2fb50e38aaf1ab84c31e74513bc1b91d9ccea0eb93f1`
+- Unknown company — `job_381a89304633760bc6630967c4b9aa52f0cd309187cdc570a96bd45f6b8fd257`
+- Unknown company — `job_613e68e6436d442ec49076487ae92b8caea4bc93ea50444ad45abd61dabbae91`
+- Unknown company — `job_67be8e2e7877b632adc86fc051c88dbff666ae5fedd12571b894c684fbc42de8`
+- Unknown company — `job_9e105ccf03da3b5f55d8dee2fbecfc2942c23822f2c1c01002f94b8b34b16aa0`
+- Unknown company — `job_a170b318720373e9263856e5862c94d1146a2db33a30ac1804472f9d2961d93c`
+- Unknown company — `job_a981daa250673af17c5949c94067ba7537a3cf361dec5a41c5145fbf7546a3fd`
+- Unknown company — `job_bbb6127d3ae187e090956cbd24c778df32ee1e300212aee76d076b8cb67723d6`
+- Unknown company — `job_c412f7d6f89cb270d62bcef432ac3631e3dac20bca12a0ed276eed50354f1044`
+- Unknown company — `job_e358a907dca7acb510886bcf60a07234e80b48f4d4ff35356520efae93db3cc3`
+- Verda — `freehire:junior-data-center-technician-verda-hpm44p4g`
+- YER / Mamgo — `job_f8165a5047d6254bc73f29379092b598f673bc9052f1d02f8ea3625561cc1508`
+<!-- generated:status:end -->
 
 Before every application, deduplicate against this list and ask the user whether
 the private desktop tracker contains newer entries.

@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { parse } from "yaml";
 import { readFile } from "node:fs/promises";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { CapabilityRegistry } from "../packages/storage/src/capabilities";
 import { openDatabase } from "../packages/storage/src/database";
 import { migrate } from "../packages/storage/src/migrate";
@@ -18,6 +18,7 @@ import { importVacancy } from "../packages/jobs/src/import";
 import { createUrlImportSession, importVacancyFromUrl } from "../packages/jobs/src/url-import";
 import { renderResultCard } from "../packages/jobs/src/card";
 import { StorageRepository, type ApplicationStatus, type DocumentPacketRecord, type StoredJob } from "../packages/storage/src/repository";
+import { readHandoffState, renderPrivateHandoff, renderSanitizedStatus, replaceGeneratedStatus } from "../packages/storage/src/handoff";
 import { discoverFreehire, type FreehireSourceConfig } from "../packages/search/src/freehire";
 import { discoverJobsuche, type JobsucheSourceConfig } from "../packages/search/src/jobsuche";
 import { discoverArbeitnow, type ArbeitnowSourceConfig } from "../packages/search/src/arbeitnow";
@@ -166,13 +167,22 @@ function openRepository(root: string): { db: ReturnType<typeof openDatabase>; re
   return { db, repository: new StorageRepository(db, root) };
 }
 
+async function writeAtomicText(destination: string, contents: string): Promise<void> {
+  const temporary = join(dirname(destination), `.${basename(destination)}.${process.pid}.tmp`);
+  try {
+    await writeFile(temporary, contents, "utf8");
+    await rename(temporary, destination);
+  } catch (error) {
+    await rm(temporary, { force: true });
+    throw error;
+  }
+}
+
 async function writeExport(root: string, jobId: string, value: unknown): Promise<string> {
   const directory = join(root, "workspace", "exports");
   await mkdir(directory, { recursive: true });
   const destination = join(directory, `${jobId}.json`);
-  const temporary = join(directory, `.${basename(destination)}.${process.pid}.tmp`);
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  await rename(temporary, destination);
+  await writeAtomicText(destination, `${JSON.stringify(value, null, 2)}\n`);
   return join("workspace", "exports", `${jobId}.json`).replace(/\\/g, "/");
 }
 
@@ -675,10 +685,33 @@ async function runApplications(root: string, command: string | undefined, argume
 }
 
 async function runReport(root: string, command: string | undefined, arguments_: string[]): Promise<void> {
-  if (command !== "daily") throw new Error("Usage: report daily");
-  parseFlags(arguments_, [], "report daily");
+  if (command !== "daily" && command !== "handoff") throw new Error("Usage: report <daily|handoff>");
+  parseFlags(arguments_, [], `report ${command}`);
   const { db, repository } = openRepository(root);
   try {
+    if (command === "handoff") {
+      const state = readHandoffState(db, repository);
+      const privateJson = `${JSON.stringify(state, null, 2)}\n`;
+      const privateMarkdown = renderPrivateHandoff(state);
+      const publicPath = join(root, "CHATGPT_WORK_HANDOFF.md");
+      const publicHandoff = await readFile(publicPath, "utf8");
+      const updatedPublicHandoff = replaceGeneratedStatus(publicHandoff, renderSanitizedStatus(state));
+      const exportDirectory = join(root, "workspace", "exports");
+      const jsonPath = join(exportDirectory, "handoff.json");
+      const markdownPath = join(exportDirectory, "handoff.md");
+      await mkdir(exportDirectory, { recursive: true });
+      await writeAtomicText(jsonPath, privateJson);
+      await writeAtomicText(markdownPath, privateMarkdown);
+      await writeAtomicText(publicPath, updatedPublicHandoff);
+      console.log(JSON.stringify({
+        json: "workspace/exports/handoff.json",
+        markdown: "workspace/exports/handoff.md",
+        public_handoff: "CHATGPT_WORK_HANDOFF.md",
+        vacancies: state.vacancies.length,
+        applications: state.applications.length,
+      }, null, 2));
+      return;
+    }
     const date = new Date().toISOString().slice(0, 10);
     const activity = repository.dailyActivity(date);
     const applications = repository.listApplications();

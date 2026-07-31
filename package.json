@@ -13,6 +13,7 @@
     "documents:generate": "bun run scripts/cli.ts documents generate",
     "applications": "bun run scripts/cli.ts applications",
     "report:daily": "bun run scripts/cli.ts report daily",
+    "report:handoff": "bun run scripts/cli.ts report handoff",
     "search:freehire": "bun run scripts/cli.ts search freehire",
     "search:ba": "bun run scripts/cli.ts search ba",
     "search:arbeitnow": "bun run scripts/cli.ts search arbeitnow",
