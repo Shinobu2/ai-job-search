@@ -70,7 +70,7 @@ function removeHiddenHtml(raw: string, hiddenClasses: Set<string>): string {
   });
 }
 
-function visibleHtmlText(raw: string): string {
+export function visibleHtmlText(raw: string): string {
   const hiddenClasses = stylesheetHiddenClasses(raw);
   return decodeHtml(
     removeHiddenHtml(raw.replace(/<!--([\s\S]*?)-->/g, ""), hiddenClasses)
@@ -129,7 +129,7 @@ function asImported(job: StoredJob, sourceHash: string, reused: boolean, logical
 export async function importVacancy(request: ImportRequest, repository: StorageRepository, options: DiscoveryImportOptions = {}): Promise<ImportedJob> {
   const source = await sourceFrom(request);
   const canonicalUrl = request.sourceUrl ? canonicalHttpUrl(request.sourceUrl) ?? undefined : undefined;
-  const values = identity(source.extractionText);
+  const values = request.identity ?? identity(source.extractionText);
   const stableKey = canonicalUrl ?? (request.sourceId ? `source-id:${request.sourceId}` : source.rawHash);
   const sourceId = `source_${hash(`source:${stableKey}:${source.rawHash}`)}`;
   const jobId = `job_${hash(`job:${stableKey}:${source.rawHash}`)}`;

@@ -66,7 +66,7 @@ export function assertReadableGermanSource(
   if (!source.enabled) throw new Error(`${label} source is disabled by workspace policy`);
   if (source.mode !== "read_import_evaluate") throw new Error(`${label} source must use read_import_evaluate mode`);
   if (source.country !== "DE") throw new Error(`${label} source only supports country DE`);
-  if (!["datacenter", "bridge"].includes(source.track)) throw new Error(`${label} source track must be datacenter or bridge`);
+  if (!source.track.trim()) throw new Error(`${label} source track must be non-empty`);
 }
 
 export async function mapBounded<T, R>(
@@ -173,7 +173,7 @@ export function diagnosticFromError(
 }
 
 function normalizedLocation(value: string): string {
-  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/ß/g, "ss").replace(/[^a-z0-9]+/g, " ").trim();
 }
 
 export function locationActionability(location: string | null, cities: string[]): "actionable" | "out_of_area" | "unknown" {

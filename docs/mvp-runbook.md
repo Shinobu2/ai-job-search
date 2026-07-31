@@ -46,14 +46,14 @@ verification.
 ```powershell
 bun run applications -- set --id <job-id> --status shortlisted --next "Review shift and salary"
 bun run applications -- set --id <job-id> --status ready_for_review
-bun run applications -- set --id <job-id> --status user_submitted --confirm yes --note "Confirmed by user"
+bun run applications -- set --id <job-id> --status user_submitted --confirm --note "Confirmed by user"
 bun run applications -- list
 bun run report:daily
 ```
 
 `ready_for_review` is accepted only when the generated packet metadata says it
 is ready. External states (`user_submitted`, `interview`, `offer`, `rejected`,
-`withdrawn`) require `--confirm yes`; submission, interview, and offer also
+`withdrawn`) require `--confirm`; submission, interview, and offer also
 enforce their preceding state. The MVP does not post forms, send email, or
 store employer credentials.
 

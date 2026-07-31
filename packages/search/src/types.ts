@@ -2,7 +2,7 @@ import type { WorkspaceSnapshot } from "../../core/src/types";
 import type { EvaluationResult } from "../../jobs/src/types";
 import type { StorageRepository } from "../../storage/src/repository";
 
-export type SearchTrack = "datacenter" | "bridge";
+export type SearchTrack = string;
 
 export type SourceDiagnostic = {
   stage: "search" | "detail" | "parse";

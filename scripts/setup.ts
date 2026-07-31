@@ -17,10 +17,12 @@ export interface SetupSummary {
 function mergeDefaults(defaultValue: unknown, existingValue: unknown): unknown {
   if (Array.isArray(existingValue) && Array.isArray(defaultValue)) {
     if (existingValue.every(isRecord) && defaultValue.every(isRecord) && defaultValue.every((item) => typeof item.id === "string")) {
-      const existingById = new Map(existingValue.filter((item) => typeof item.id === "string").map((item) => [item.id as string, item]));
+      const itemKey = (item: Record<string, unknown>) =>
+        typeof item.track === "string" ? `${String(item.id)}\u0000${item.track}` : String(item.id);
+      const existingById = new Map(existingValue.filter((item) => typeof item.id === "string").map((item) => [itemKey(item), item]));
       return [
-        ...defaultValue.map((item) => existingById.has(item.id as string) ? mergeDefaults(item, existingById.get(item.id as string)) : item),
-        ...existingValue.filter((item) => typeof item.id !== "string" || !defaultValue.some((candidate) => candidate.id === item.id)),
+        ...defaultValue.map((item) => existingById.has(itemKey(item)) ? mergeDefaults(item, existingById.get(itemKey(item))) : item),
+        ...existingValue.filter((item) => typeof item.id !== "string" || !defaultValue.some((candidate) => itemKey(candidate) === itemKey(item))),
       ];
     }
     return existingValue;

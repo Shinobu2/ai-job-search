@@ -4,6 +4,7 @@ import {
   discoveryStatus,
   discoveryScopeSummary,
   fetchWithRetry,
+  locationActionability,
   mapBounded,
   normalizedDiscoveryScope,
   prioritizeByLocation,
@@ -66,6 +67,10 @@ test("location prioritization keeps local roles ahead of unknown and out-of-area
     rows[1],
     rows[0],
   ]);
+});
+
+test("location matching treats German sharp s like its ASCII spelling", () => {
+  expect(locationActionability("Gießen, Hessen, Germany", ["Giessen"])).toBe("actionable");
 });
 
 test("mapBounded preserves input order, caps concurrency at five, and settles sibling failures", async () => {

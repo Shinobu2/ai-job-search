@@ -271,7 +271,7 @@ function advertisedSalaryFacts(salary: string | null): string[] {
   return [`posting.salary:${salary}`, assumption];
 }
 
-export type EvaluationContext = { track?: "datacenter" | "bridge" };
+export type EvaluationContext = { track?: string };
 
 function gatesFor(
   archetype: EvaluationResult["archetype"],

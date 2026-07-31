@@ -14,19 +14,52 @@ import { prepareApplicationAnswerMatrix } from "../packages/core/src/application
 import { extractVacancy } from "../packages/jobs/src/extract";
 import { buildEvaluationInput, evaluateVacancy } from "../packages/jobs/src/evaluate";
 import { importVacancy } from "../packages/jobs/src/import";
+import { importVacancyFromUrl } from "../packages/jobs/src/url-import";
 import { renderResultCard } from "../packages/jobs/src/card";
 import { StorageRepository, type ApplicationStatus, type DocumentPacketRecord, type StoredJob } from "../packages/storage/src/repository";
 import { discoverFreehire, type FreehireSourceConfig } from "../packages/search/src/freehire";
 import { discoverJobsuche, type JobsucheSourceConfig } from "../packages/search/src/jobsuche";
+import { discoverArbeitnow, type ArbeitnowSourceConfig } from "../packages/search/src/arbeitnow";
 import { loadEmployerRegistry } from "../packages/search/src/employer-registry";
-import { discoverPersonioEmployer } from "../packages/search/src/personio";
-import { discoverGreenhouseEmployer } from "../packages/search/src/greenhouse";
-import { discoverLeverEmployer } from "../packages/search/src/lever";
-import { isActionableDiscoveryJob, type DiscoveryCounters, type SearchTrack, type SourceDiagnostic } from "../packages/search/src/types";
+import { discoverAtsEmployer, PUBLIC_ATS_TYPES } from "../packages/search/src/ats";
+import { emptyCounters, isActionableDiscoveryJob, type DiscoveryBatch, type DiscoveryCounters, type DiscoveryStatus, type SearchTrack, type SourceDiagnostic } from "../packages/search/src/types";
 import { generateDocumentPacket, hashEvidenceSnapshot } from "../packages/documents/src/generate";
 import { buildAtsDocx, lintAtsDocx } from "../packages/documents/src/ats-docx";
 
-type JobFlags = { id?: string; file?: string; text?: string; status?: string; next?: string; note?: string; confirm?: string };
+type FlagKey = "id" | "file" | "text" | "url" | "urlFile" | "status" | "next" | "note" | "confirm" | "dryRun" | "limit" | "strict" | "track";
+type FlagKind = "string" | "boolean" | "number";
+
+export type CliFlags = {
+  id?: string;
+  file?: string;
+  text?: string;
+  url?: string;
+  urlFile?: string;
+  status?: string;
+  next?: string;
+  note?: string;
+  confirm?: boolean;
+  dryRun?: boolean;
+  limit?: number;
+  strict?: boolean;
+  track?: string;
+};
+
+const FLAG_DEFINITIONS: Record<FlagKey, { option: string; kind: FlagKind }> = {
+  id: { option: "--id", kind: "string" },
+  file: { option: "--file", kind: "string" },
+  text: { option: "--text", kind: "string" },
+  url: { option: "--url", kind: "string" },
+  urlFile: { option: "--url-file", kind: "string" },
+  status: { option: "--status", kind: "string" },
+  next: { option: "--next", kind: "string" },
+  note: { option: "--note", kind: "string" },
+  confirm: { option: "--confirm", kind: "boolean" },
+  dryRun: { option: "--dry-run", kind: "boolean" },
+  limit: { option: "--limit", kind: "number" },
+  strict: { option: "--strict", kind: "boolean" },
+  track: { option: "--track", kind: "string" },
+};
 
 function sha256(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
@@ -38,24 +71,71 @@ function postingWorkingLanguage(rawContent: string): "en" | "de" {
   return "en";
 }
 
-function parseFlags(arguments_: string[]): JobFlags {
-  const flags: JobFlags = {};
-  for (let index = 0; index < arguments_.length; index += 2) {
-    const flag = arguments_[index];
-    if (!flag?.startsWith("--")) throw new Error(`Unknown argument: ${flag ?? ""}`);
-    const key = flag.slice(2) as keyof JobFlags;
-    if (!(key in { id: true, file: true, text: true, status: true, next: true, note: true, confirm: true })) throw new Error(`Unknown flag: ${flag}`);
-    const value = arguments_[index + 1];
-    if (!value || value.startsWith("--")) throw new Error(`${flag} requires a value`);
-    if (flags[key] !== undefined) throw new Error(`${flag} may only be provided once`);
-    flags[key] = value;
+export function searchProfileSummary(profile: unknown): string | null {
+  if (!profile || typeof profile !== "object" || Array.isArray(profile)) return null;
+  const profileRecord = profile as Record<string, unknown>;
+  const availability = profileRecord.availability && typeof profileRecord.availability === "object" && !Array.isArray(profileRecord.availability)
+    ? profileRecord.availability as Record<string, unknown>
+    : {};
+  const legal = profileRecord.legal && typeof profileRecord.legal === "object" && !Array.isArray(profileRecord.legal)
+    ? profileRecord.legal as Record<string, unknown>
+    : {};
+  const verifiedValue = (field: unknown): unknown => {
+    if (!field || typeof field !== "object" || Array.isArray(field)) return null;
+    const record = field as Record<string, unknown>;
+    return ["user_confirmed", "document_verified"].includes(String(record.verification_status))
+      ? record.value
+      : null;
+  };
+  const authorizationValue = verifiedValue(legal.work_authorization);
+  const authorization = authorizationValue && typeof authorizationValue === "object" && !Array.isArray(authorizationValue)
+    ? authorizationValue as Record<string, unknown>
+    : {};
+  const verifiedAvailableFrom = verifiedValue(availability.available_from);
+  const availableFrom = typeof verifiedAvailableFrom === "string"
+    ? verifiedAvailableFrom
+    : typeof authorization.available_from === "string" ? authorization.available_from : null;
+  const parts: string[] = [];
+  if (availableFrom) parts.push(`Available from: ${availableFrom}`);
+  if (typeof authorization.basis === "string" && authorization.basis.trim()) {
+    parts.push(`Work authorization: ${authorization.basis}`);
   }
-  return flags;
+  if (typeof authorization.sponsorship_required === "boolean") {
+    parts.push(`Sponsorship required: ${authorization.sponsorship_required ? "yes" : "no"}`);
+  }
+  return parts.length ? parts.join(" · ") : null;
 }
 
-function requireOnly(flags: JobFlags, allowed: Array<keyof JobFlags>, command: string): void {
-  const invalid = Object.keys(flags).find((key) => !allowed.includes(key as keyof JobFlags));
-  if (invalid) throw new Error(`--${invalid} is not supported by job ${command}`);
+export function parseFlags(arguments_: string[], allowed: readonly FlagKey[], command: string): CliFlags {
+  const flags: Record<string, string | number | boolean> = {};
+  const allowedOptions = allowed.map((key) => FLAG_DEFINITIONS[key].option);
+  const allowedMessage = allowedOptions.length ? allowedOptions.join(", ") : "(none)";
+  for (let index = 0; index < arguments_.length;) {
+    const option = arguments_[index];
+    if (!option?.startsWith("--")) {
+      throw new Error(`Unknown argument ${option ?? ""} for ${command}. Allowed flags: ${allowedMessage}`);
+    }
+    const key = allowed.find((candidate) => FLAG_DEFINITIONS[candidate].option === option);
+    if (!key) throw new Error(`Unknown flag ${option} for ${command}. Allowed flags: ${allowedMessage}`);
+    if (flags[key] !== undefined) throw new Error(`${option} may only be provided once`);
+    const definition = FLAG_DEFINITIONS[key];
+    if (definition.kind === "boolean") {
+      flags[key] = true;
+      index += 1;
+      continue;
+    }
+    const value = arguments_[index + 1];
+    if (!value || value.startsWith("--")) throw new Error(`${option} requires a value`);
+    if (definition.kind === "number") {
+      const numericValue = Number(value);
+      if (!Number.isFinite(numericValue)) throw new Error(`${option} requires a number`);
+      flags[key] = numericValue;
+    } else {
+      flags[key] = value;
+    }
+    index += 2;
+  }
+  return flags as CliFlags;
 }
 
 function openRepository(root: string): { db: ReturnType<typeof openDatabase>; repository: StorageRepository } {
@@ -85,23 +165,45 @@ async function evaluateJob(root: string, repository: StorageRepository, jobId: s
 
 async function runJob(root: string, command: string | undefined, arguments_: string[]): Promise<void> {
   if (!command) throw new Error("Usage: job <import|evaluate|export|check>");
-  const flags = parseFlags(arguments_);
+  const allowedByCommand: Record<string, readonly FlagKey[]> = {
+    import: ["file", "text", "url", "urlFile"],
+    evaluate: ["id"],
+    export: ["id"],
+    check: ["file", "text"],
+  };
+  const allowed = allowedByCommand[command];
+  if (!allowed) throw new Error(`Unknown job command: ${command}`);
+  const flags = parseFlags(arguments_, allowed, `job ${command}`);
   const { db, repository } = openRepository(root);
   try {
     if (command === "import") {
-      requireOnly(flags, ["file", "text"], command);
-      if ((flags.file === undefined) === (flags.text === undefined)) throw new Error("Provide exactly one of --file or --text");
+      const inputs = [flags.file, flags.text, flags.url, flags.urlFile].filter((value) => value !== undefined);
+      if (inputs.length !== 1) throw new Error("Provide exactly one of --file, --text, --url, or --url-file");
+      if (flags.url !== undefined) {
+        console.log(JSON.stringify(await importVacancyFromUrl(flags.url, repository), null, 2));
+        return;
+      }
+      if (flags.urlFile !== undefined) {
+        const urls = (await readFile(flags.urlFile, "utf8"))
+          .replace(/^\ufeff/, "")
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean);
+        if (urls.length === 0) throw new Error(`URL file contains no URLs: ${flags.urlFile}`);
+        const imported = [];
+        for (const url of urls) imported.push(await importVacancyFromUrl(url, repository));
+        console.log(JSON.stringify(imported, null, 2));
+        return;
+      }
       console.log(JSON.stringify(await importVacancy({ file: flags.file, text: flags.text }, repository), null, 2));
       return;
     }
     if (command === "evaluate") {
-      requireOnly(flags, ["id"], command);
       if (!flags.id) throw new Error("job evaluate requires --id");
       console.log(JSON.stringify(await evaluateJob(root, repository, flags.id), null, 2));
       return;
     }
     if (command === "export") {
-      requireOnly(flags, ["id"], command);
       if (!flags.id) throw new Error("job export requires --id");
       const result = repository.readEvaluation(flags.id);
       if (!result) throw new Error(`No evaluation exists for job ID: ${flags.id}`);
@@ -112,7 +214,6 @@ async function runJob(root: string, command: string | undefined, arguments_: str
       return;
     }
     if (command === "check") {
-      requireOnly(flags, ["file", "text"], command);
       if ((flags.file === undefined) === (flags.text === undefined)) throw new Error("Provide exactly one of --file or --text");
       const imported = await importVacancy({ file: flags.file, text: flags.text }, repository);
       const result = await evaluateJob(root, repository, imported.id);
@@ -129,46 +230,134 @@ async function runJob(root: string, command: string | undefined, arguments_: str
 }
 
 async function runSearch(root: string, sourceName: string | undefined, arguments_: string[]): Promise<void> {
-  if (!sourceName || arguments_.length > 0 || !["freehire", "jobsuche", "ba", "employers"].includes(sourceName)) throw new Error("Usage: search <freehire|jobsuche|ba|employers>");
-  const tracks: SearchTrack[] = ["datacenter", "bridge"];
-  const trackLabel = (track: SearchTrack) => track === "datacenter" ? "Data centre / IT operations" : "Bridge roles";
+  if (!sourceName || !["all", "freehire", "jobsuche", "ba", "arbeitnow", "employers"].includes(sourceName)) throw new Error("Usage: search <all|freehire|jobsuche|ba|arbeitnow|employers>");
+  const flags = parseFlags(arguments_, ["track", "limit", "dryRun"], `search ${sourceName}`);
+  const limit = flags.limit ?? MODEL_REVIEW_LIMIT;
+  if (!Number.isInteger(limit) || limit <= 0) throw new Error("--limit must be a positive integer");
+  const workspace = await loadWorkspace(root);
+  type ConfiguredSearchSource = FreehireSourceConfig | JobsucheSourceConfig | ArbeitnowSourceConfig;
+  const sources = (workspace.search as { discovery?: { sources?: ConfiguredSearchSource[] } }).discovery?.sources ?? [];
+  const configuredTracks = [...new Set(sources.map((source) => source.track))];
+  if (configuredTracks.length === 0) throw new Error("workspace/search.yml does not configure any discovery tracks");
+  if (flags.track && !configuredTracks.includes(flags.track)) {
+    throw new Error(`Unknown track: ${flags.track}. Configured tracks: ${configuredTracks.join(", ")}`);
+  }
+  const tracks = flags.track ? [flags.track] : configuredTracks;
+  const profileSummary = searchProfileSummary(workspace.profile);
+  const printTrack = (track: SearchTrack) => console.log(`\nTrack: ${track}`);
   const printJob = (job: {
     title: string; company: string | null; location: string | null; sourceId: string; sourceUrl: string;
     reused: boolean; needs_review: boolean;
   }, index: number, sourceLabel: string) => {
     console.log(`${index}. ${job.title} — ${job.company}`);
     console.log(`Location: ${job.location ?? "unknown"}`);
-    console.log("Старт: 17.08.2026 · §24 permit (no sponsorship)");
+    if (profileSummary) console.log(profileSummary);
     console.log(`Review: ${job.needs_review ? "required" : "ready"}`);
     console.log(`Source: ${sourceLabel} ${job.sourceId} — ${job.sourceUrl}`);
     console.log(`Import: ${job.reused ? "reused" : "created"}\n`);
   };
+  const discoverConfiguredSource = (
+    source: ConfiguredSearchSource,
+    repository: StorageRepository,
+  ): Promise<DiscoveryBatch> => {
+    if (source.id === "jobsuche") return discoverJobsuche(source, repository, workspace, { maxResults: limit });
+    if (source.id === "arbeitnow") return discoverArbeitnow(source, repository, workspace, { maxResults: limit });
+    return discoverFreehire(source, repository, workspace, { maxResults: limit });
+  };
+  const sourceLabel = (id: ConfiguredSearchSource["id"]): string =>
+    id === "jobsuche" ? "Jobsuche" : id === "arbeitnow" ? "Arbeitnow" : "FreeHire";
+  if (sourceName === "all") {
+    const configured = sources.filter((source) => source.enabled && tracks.includes(source.track));
+    if (configured.length === 0) throw new Error("workspace/search.yml does not configure any enabled discovery sources");
+    if (flags.dryRun) {
+      console.log(`Dry run: search all | limit=${limit}`);
+      for (const source of configured) {
+        console.log(`- ${source.id}:${source.track} | ${source.keywords.length} keyword(s) | ${source.cities.length} city/cities`);
+      }
+      console.log("No network requests or persistence were performed.");
+      console.log("No application was submitted.");
+      return;
+    }
+    const { db, repository } = openRepository(root);
+    const batches: DiscoveryBatch[] = [];
+    try {
+      for (const source of configured) {
+        printTrack(source.track);
+        let batch: DiscoveryBatch;
+        try {
+          batch = await discoverConfiguredSource(source, repository);
+        } catch (error) {
+          const diagnostic: SourceDiagnostic = {
+            stage: "search",
+            locator: `${source.id}:${source.track}`,
+            code: "source_failed",
+            message: error instanceof Error ? error.message : String(error),
+            transient: false,
+          };
+          batch = {
+            sourceId: `${source.id}:${source.track}`,
+            track: source.track,
+            status: "failed",
+            scope: { planned: 1, completed: 0, failed: 1 },
+            jobs: [],
+            counters: { searched: 0, detailed: 0, imported: 0, skipped: 0, failed: 1 },
+            diagnostics: [diagnostic],
+          };
+        }
+        batches.push(batch);
+        const label = sourceLabel(source.id);
+        const displayed = batch.jobs.filter(isActionableDiscoveryJob).slice(0, limit);
+        console.log(`${label} ${source.track} status: ${batch.status} | discovered: ${batch.jobs.length} | raw results for model review: ${displayed.length}`);
+        printDiscoveryDiagnostics(`${label} ${source.track}`, batch.counters, batch.diagnostics);
+        displayed.forEach((job, index) => printJob(job, index + 1, label));
+      }
+    } finally {
+      db.close();
+    }
+    printSearchAllSummary(batches);
+    process.exitCode = searchAllExitCode(batches.map((batch) => batch.status));
+    console.log("No application was submitted.");
+    return;
+  }
   if (sourceName === "employers") {
     const registry = await loadEmployerRegistry();
+    if (flags.dryRun) {
+      console.log(`Dry run: search employers | limit=${limit}`);
+      for (const track of tracks) {
+        printTrack(track);
+        const employers = registry.employers.filter((entry) =>
+          entry.track === track
+          && entry.enabled
+          && entry.policy === "public_ats_endpoint"
+          && PUBLIC_ATS_TYPES.some((ats) => ats === entry.ats));
+        console.log(`Enabled public ATS employers: ${employers.length}`);
+      }
+      console.log("No network requests or persistence were performed.");
+      console.log("No application was submitted.");
+      return;
+    }
     const { db, repository } = openRepository(root);
     try {
       let total = 0;
       for (const track of tracks) {
-        console.log(`\n${trackLabel(track)}`);
+        printTrack(track);
         let index = 1;
         let processed = 0;
         const employers = registry.employers.filter((entry) =>
           entry.track === track
           && entry.enabled
           && entry.policy === "public_ats_endpoint"
-          && ["personio", "greenhouse", "lever"].includes(entry.ats));
+          && PUBLIC_ATS_TYPES.some((ats) => ats === entry.ats));
         for (const employer of employers) {
+          if (processed >= limit) break;
           try {
-            const workspace = await loadWorkspace(root);
             const discoveryEmployer = { ...employer, cities: registry.cities };
-            const sourceBudget = Math.min(4, MODEL_REVIEW_LIMIT - processed);
-            const batch = employer.ats === "greenhouse"
-              ? await discoverGreenhouseEmployer(discoveryEmployer, repository, workspace, { maxResults: sourceBudget })
-              : employer.ats === "lever"
-                ? await discoverLeverEmployer(discoveryEmployer, repository, workspace, { maxResults: sourceBudget })
-                : await discoverPersonioEmployer(discoveryEmployer, repository, workspace, { maxResults: sourceBudget });
-            const atsLabel = employer.ats === "greenhouse" ? "Greenhouse" : employer.ats === "lever" ? "Lever" : "Personio";
-            const reviewJobs = batch.jobs.filter(isActionableDiscoveryJob);
+            const sourceBudget = Math.min(4, limit - processed);
+            const batch = await discoverAtsEmployer(discoveryEmployer, repository, workspace, { maxResults: sourceBudget });
+            const atsLabel = employer.ats === "smartrecruiters"
+              ? "SmartRecruiters"
+              : `${employer.ats[0].toUpperCase()}${employer.ats.slice(1)}`;
+            const reviewJobs = batch.jobs.filter(isActionableDiscoveryJob).slice(0, limit - processed);
             processed += reviewJobs.length;
             printDiscoveryDiagnostics(`${atsLabel} ${employer.id}`, batch.counters, batch.diagnostics);
             for (const job of reviewJobs) {
@@ -180,14 +369,13 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
             const diagnostic: SourceDiagnostic = { stage: "search", locator: employer.id, code: "employer_failed", message: error instanceof Error ? error.message : String(error), transient: false };
             printDiscoveryDiagnostics(`${employer.ats} ${employer.id}`, { searched: 0, detailed: 0, imported: 0, skipped: 0, failed: 1 }, [diagnostic]);
           }
-          if (processed >= MODEL_REVIEW_LIMIT) break;
         }
       }
       console.log(`Employer results for model review: ${total}`);
       const manual = registry.employers.filter((entry) => entry.enabled && entry.policy === "manual_only");
       console.log("\nTrusted official manual watchlist");
       for (const track of tracks) {
-        console.log(`${trackLabel(track)}:`);
+        console.log(`Track: ${track}`);
         for (const source of manual.filter((entry) => entry.track === track)) {
           const kind = source.source_kind === "agency" ? "agency" : "direct employer";
           console.log(`- ${source.name} [${kind}] — ${source.career_url}`);
@@ -199,27 +387,37 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
       db.close();
     }
   }
-  const workspace = await loadWorkspace(root);
   const sourceId = sourceName === "ba" ? "jobsuche" : sourceName;
-  const sources = (workspace.search as { discovery?: { sources?: Array<FreehireSourceConfig | JobsucheSourceConfig> } }).discovery?.sources ?? [];
-  const configured = sources.filter((candidate) => candidate.id === sourceId && candidate.enabled);
-  if (configured.length === 0) throw new Error(`workspace/search.yml does not configure an enabled ${sourceId === "freehire" ? "FreeHire" : "Jobsuche"} source`);
+  const configured = sources.filter((candidate) =>
+    candidate.id === sourceId
+    && candidate.enabled
+    && tracks.includes(candidate.track));
+  if (configured.length === 0) throw new Error(`workspace/search.yml does not configure an enabled ${sourceLabel(sourceId as ConfiguredSearchSource["id"])} source`);
+  if (flags.dryRun) {
+    console.log(`Dry run: search ${sourceName} | limit=${limit}`);
+    for (const track of tracks) {
+      printTrack(track);
+      for (const source of configured.filter((candidate) => candidate.track === track)) {
+        console.log(`- ${source.id}: ${source.keywords.length} keyword(s), ${source.cities.length} city/cities`);
+      }
+    }
+    console.log("No network requests or persistence were performed.");
+    console.log("No application was submitted.");
+    return;
+  }
   const { db, repository } = openRepository(root);
   try {
     for (const track of tracks) {
-      console.log(`\n${trackLabel(track)}`);
+      printTrack(track);
       let index = 1;
       for (const source of configured.filter((candidate) => candidate.track === track)) {
-        const jobsuche = source.id === "jobsuche";
-        const batch = jobsuche
-          ? await discoverJobsuche(source, repository, workspace, { maxResults: MODEL_REVIEW_LIMIT })
-          : await discoverFreehire(source, repository, workspace, { maxResults: MODEL_REVIEW_LIMIT });
-        const sourceLabel = jobsuche ? "Jobsuche" : "FreeHire";
-        const displayed = batch.jobs.filter(isActionableDiscoveryJob).slice(0, MODEL_REVIEW_LIMIT);
-        console.log(`${sourceLabel} ${track} discovered: ${batch.jobs.length} | raw results for model review: ${displayed.length}`);
-        printDiscoveryDiagnostics(`${sourceLabel} ${track}`, batch.counters, batch.diagnostics);
+        const batch = await discoverConfiguredSource(source, repository);
+        const label = sourceLabel(source.id);
+        const displayed = batch.jobs.filter(isActionableDiscoveryJob).slice(0, limit);
+        console.log(`${label} ${track} discovered: ${batch.jobs.length} | raw results for model review: ${displayed.length}`);
+        printDiscoveryDiagnostics(`${label} ${track}`, batch.counters, batch.diagnostics);
         for (const result of displayed) {
-          printJob(result, index, sourceLabel);
+          printJob(result, index, label);
           index += 1;
         }
       }
@@ -228,6 +426,34 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
   } finally {
     db.close();
   }
+}
+
+export function searchAllExitCode(statuses: DiscoveryStatus[]): 0 | 1 | 2 {
+  if (statuses.includes("failed")) return 1;
+  if (statuses.includes("partial")) return 2;
+  return 0;
+}
+
+function printSearchAllSummary(batches: DiscoveryBatch[]): void {
+  const total = emptyCounters();
+  for (const batch of batches) {
+    total.searched += batch.counters.searched;
+    total.detailed += batch.counters.detailed;
+    total.imported += batch.counters.imported;
+    total.skipped += batch.counters.skipped;
+    total.failed += batch.counters.failed;
+  }
+  const aggregateStatus: DiscoveryStatus = batches.some((batch) => batch.status === "failed")
+    ? "failed"
+    : batches.some((batch) => batch.status === "partial") ? "partial" : "success";
+  console.log("\nSearch all summary");
+  console.log("| Source | Track | Status | Searched | Detailed | Imported | Skipped | Failed |");
+  console.log("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |");
+  for (const batch of batches) {
+    const counters = batch.counters;
+    console.log(`| ${batch.sourceId} | ${batch.track} | ${batch.status} | ${counters.searched} | ${counters.detailed} | ${counters.imported} | ${counters.skipped} | ${counters.failed} |`);
+  }
+  console.log(`| TOTAL | - | ${aggregateStatus} | ${total.searched} | ${total.detailed} | ${total.imported} | ${total.skipped} | ${total.failed} |`);
 }
 
 const MODEL_REVIEW_LIMIT = 12;
@@ -248,8 +474,7 @@ function printDiscoveryDiagnostics(label: string, counters: DiscoveryCounters, d
 
 async function runDocuments(root: string, command: string | undefined, arguments_: string[]): Promise<void> {
   if (command !== "generate") throw new Error("Usage: documents generate --id <job-id>");
-  const flags = parseFlags(arguments_);
-  requireOnly(flags, ["id"], "documents generate");
+  const flags = parseFlags(arguments_, ["id"], "documents generate");
   if (!flags.id) throw new Error("documents generate requires --id");
   const workspace = await loadWorkspace(root);
   const { db, repository } = openRepository(root);
@@ -336,22 +561,26 @@ async function runDocuments(root: string, command: string | undefined, arguments
 }
 
 async function runApplications(root: string, command: string | undefined, arguments_: string[]): Promise<void> {
-  const flags = parseFlags(arguments_);
+  const allowedByCommand: Record<string, readonly FlagKey[]> = {
+    list: [],
+    history: ["id"],
+    prepare: ["id", "file"],
+    set: ["id", "status", "next", "note", "confirm"],
+  };
+  if (!command || !allowedByCommand[command]) throw new Error("Usage: applications <set|list|history|prepare>");
+  const flags = parseFlags(arguments_, allowedByCommand[command], `applications ${command}`);
   const { db, repository } = openRepository(root);
   try {
     if (command === "list") {
-      if (arguments_.length) throw new Error("applications list takes no flags");
       console.log(JSON.stringify(repository.listApplications(), null, 2));
       return;
     }
     if (command === "history") {
-      requireOnly(flags, ["id"], "applications history");
       if (!flags.id) throw new Error("applications history requires --id");
       console.log(JSON.stringify(repository.listApplicationEvents(flags.id), null, 2));
       return;
     }
     if (command === "prepare") {
-      requireOnly(flags, ["id", "file"], "applications prepare");
       if (!flags.id || !flags.file) throw new Error("applications prepare requires --id and --file");
       const packet = repository.readCurrentDocumentPacket(flags.id);
       if (!packet) throw new Error(`Application ${flags.id} requires a current document packet`);
@@ -373,11 +602,10 @@ async function runApplications(root: string, command: string | undefined, argume
       return;
     }
     if (command === "set") {
-      requireOnly(flags, ["id", "status", "next", "note", "confirm"], "applications set");
       const statuses = ["shortlisted", "ready_for_review", "user_submitted", "interview", "offer", "rejected", "withdrawn"] as const;
       if (!flags.id || !flags.status || !statuses.includes(flags.status as ApplicationStatus)) throw new Error(`applications set requires --id and --status (${statuses.join("|")})`);
       const status = flags.status as ApplicationStatus;
-      const explicitlyConfirmed = flags.confirm === "yes";
+      const explicitlyConfirmed = flags.confirm === true;
       console.log(JSON.stringify(repository.setApplicationStatus(flags.id, status, { nextAction: flags.next, note: flags.note, actor: explicitlyConfirmed ? "user_confirmed_cli" : "user", confirmed: explicitlyConfirmed }), null, 2));
       return;
     }
@@ -385,8 +613,9 @@ async function runApplications(root: string, command: string | undefined, argume
   } finally { db.close(); }
 }
 
-async function runReport(root: string, command: string | undefined): Promise<void> {
+async function runReport(root: string, command: string | undefined, arguments_: string[]): Promise<void> {
   if (command !== "daily") throw new Error("Usage: report daily");
+  parseFlags(arguments_, [], "report daily");
   const { db, repository } = openRepository(root);
   try {
     const date = new Date().toISOString().slice(0, 10);
@@ -417,16 +646,19 @@ async function runReport(root: string, command: string | undefined): Promise<voi
 async function main(): Promise<void> {
   const [command, ...arguments_] = process.argv.slice(2);
   if (command === "setup") {
+    parseFlags(arguments_, [], "setup");
     console.log(JSON.stringify(await setupWorkspace(process.cwd()), null, 2));
     return;
   }
   if (command === "doctor") {
-    const report = await runDoctor(process.cwd(), arguments_.includes("--strict"));
+    const flags = parseFlags(arguments_, ["strict"], "doctor");
+    const report = await runDoctor(process.cwd(), flags.strict === true);
     console.log(JSON.stringify(report, null, 2));
     process.exitCode = report.errors.length ? 1 : 0;
     return;
   }
   if (command === "capabilities") {
+    parseFlags(arguments_, [], "capabilities");
     const db = openDatabase(join(process.cwd(), "workspace", "control-room.sqlite"));
     try {
       migrate(db);
@@ -455,14 +687,16 @@ async function main(): Promise<void> {
     await runApplications(process.cwd(), arguments_[0], arguments_.slice(1)); return;
   }
   if (command === "report") {
-    await runReport(process.cwd(), arguments_[0]); return;
+    await runReport(process.cwd(), arguments_[0], arguments_.slice(1)); return;
   }
   throw new Error("Usage: bun run scripts/cli.ts <setup|doctor|capabilities|job|search|documents|applications|report>");
 }
 
-try {
-  await main();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
+if (import.meta.main) {
+  try {
+    await main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }

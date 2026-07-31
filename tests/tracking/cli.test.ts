@@ -22,7 +22,7 @@ test("application CLI delegates transitions and rejects forged document metadata
     const imported = await run(directory, ["job", "import", "--text", "# Technician\nCompany: Example\nLocation: Frankfurt"]);
     expect(imported.code).toBe(0);
     const id = (JSON.parse(imported.stdout) as { id: string }).id;
-    expect((await run(directory, ["applications", "set", "--id", id, "--status", "user_submitted", "--confirm", "yes"])).stderr).toContain("requires current status shortlisted or ready_for_review");
+    expect((await run(directory, ["applications", "set", "--id", id, "--status", "user_submitted", "--confirm"])).stderr).toContain("requires current status shortlisted or ready_for_review");
     expect((await run(directory, ["applications", "set", "--id", id, "--status", "shortlisted"])).code).toBe(0);
     const history = await run(directory, ["applications", "history", "--id", id]);
     expect(history.code).toBe(0);

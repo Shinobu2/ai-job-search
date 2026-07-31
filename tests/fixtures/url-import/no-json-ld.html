@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Fallback fixture</title>
+    <style>
+      .concealed {
+        display: none;
+      }
+    </style>
+    <script>
+      window.__noise = "Script content must not reach the fallback text";
+    </script>
+  </head>
+  <body>
+    <article>
+      <h1>Fallback Support Technician</h1>
+      <p>Company: Fallback Fixture GmbH</p>
+      <p>Location: Cologne, Germany</p>
+      <p>Help colleagues with workplace hardware and software.</p>
+      <div hidden>Hidden mandatory C2 German</div>
+      <div class="concealed">Concealed salary claim</div>
+      <div style="display: none">Inline-hidden requirement</div>
+    </article>
+  </body>
+</html>

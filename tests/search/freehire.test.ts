@@ -45,6 +45,32 @@ function freehireJob(public_slug: string) {
   };
 }
 
+test("FreeHire discovery accepts an arbitrary configured profession track", async () => {
+  const db = openDatabase(":memory:");
+  migrate(db);
+  const originalFetch = globalThis.fetch;
+  const job = freehireJob("welding-role");
+  globalThis.fetch = (async (input: string | URL) =>
+    String(input).includes("/search?")
+      ? response({ data: [job] })
+      : response({ data: job })) as typeof fetch;
+  try {
+    const batch = await discoverFreehire(
+      { ...source, track: "welding", keywords: ["Schweisser"] },
+      new StorageRepository(db),
+      workspace as never,
+      { asOf: "2026-07-12", evaluate: false },
+    );
+
+    expect(batch).toMatchObject({ sourceId: "freehire:welding", track: "welding", status: "success" });
+    expect(batch.jobs).toEqual([expect.objectContaining({ track: "welding", title: "Data Center Technician welding-role" })]);
+    expect(db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 1 });
+  } finally {
+    globalThis.fetch = originalFetch;
+    db.close();
+  }
+});
+
 test("FreeHire discovery bounds configured reads, preserves public identity, and reuses existing jobs", async () => {
   const db = openDatabase(":memory:");
   migrate(db);

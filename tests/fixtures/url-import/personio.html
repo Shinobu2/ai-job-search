@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <title>Personio fixture</title>
+    <script type="application/ld+json">
+      { this block is intentionally invalid JSON }
+    </script>
+    <script TYPE='application/ld+json'>
+      [
+        {
+          "@context": "https://schema.org",
+          "@type": "WebPage",
+          "name": "Careers"
+        },
+        {
+          "@context": "https://schema.org",
+          "@graph": [
+            {
+              "@type": "Organization",
+              "name": "Graph Fixture GmbH"
+            },
+            {
+              "@type": ["Thing", "JobPosting"],
+              "title": "IT Support Specialist",
+              "hiringOrganization": {
+                "@type": "Organization",
+                "name": "Personio Fixture GmbH"
+              },
+              "jobLocation": [
+                {
+                  "@type": "Place",
+                  "address": {
+                    "@type": "PostalAddress",
+                    "addressLocality": "Berlin",
+                    "addressCountry": {
+                      "@type": "Country",
+                      "name": "Germany"
+                    }
+                  }
+                }
+              ],
+              "employmentType": "FULL_TIME",
+              "baseSalary": {
+                "@type": "MonetaryAmount",
+                "value": {
+                  "@type": "QuantitativeValue",
+                  "minValue": 45000,
+                  "maxValue": 55000,
+                  "unitText": "YEAR"
+                }
+              },
+              "description": "<div>Support users &amp; maintain <em>Windows</em> devices.</div>",
+              "directApply": false,
+              "identifier": {
+                "@type": "PropertyValue",
+                "value": 9876
+              }
+            }
+          ]
+        }
+      ]
+    </script>
+  </head>
+  <body>
+    <main>
+      <h1>IT Support Specialist</h1>
+    </main>
+  </body>
+</html>
