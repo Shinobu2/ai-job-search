@@ -10,6 +10,11 @@ globalThis.fetch = ((input: string | URL, init?: RequestInit) => {
   }
   if (requested.origin === "https://boards-api.greenhouse.io") return Promise.resolve(Response.json({ jobs: [] }));
   if (requested.origin === "https://api.lever.co") return Promise.resolve(Response.json([]));
+  if (requested.origin === "https://api.ashbyhq.com") return Promise.resolve(Response.json({ jobs: [], apiVersion: "1" }));
+  if (requested.origin === "https://api.smartrecruiters.com") {
+    return Promise.resolve(Response.json({ offset: 0, limit: 100, totalFound: 0, content: [] }));
+  }
+  if (requested.hostname.endsWith(".recruitee.com")) return Promise.resolve(Response.json({ offers: [] }));
   throw new Error(`unexpected employer ATS origin: ${requested.origin}`);
 }) as typeof fetch;
 

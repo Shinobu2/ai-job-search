@@ -9,12 +9,13 @@ import { CapabilityRegistry } from "../packages/storage/src/capabilities";
 import { openDatabase } from "../packages/storage/src/database";
 import { migrate } from "../packages/storage/src/migrate";
 import { loadWorkspace } from "../packages/core/src/workspace";
+import type { WorkspaceSnapshot } from "../packages/core/src/types";
 import { dateOnlyInTimeZone } from "../packages/core/src/availability";
 import { prepareApplicationAnswerMatrix } from "../packages/core/src/application-answers";
 import { extractVacancy } from "../packages/jobs/src/extract";
 import { buildEvaluationInput, evaluateVacancy } from "../packages/jobs/src/evaluate";
 import { importVacancy } from "../packages/jobs/src/import";
-import { importVacancyFromUrl } from "../packages/jobs/src/url-import";
+import { createUrlImportSession, importVacancyFromUrl } from "../packages/jobs/src/url-import";
 import { renderResultCard } from "../packages/jobs/src/card";
 import { StorageRepository, type ApplicationStatus, type DocumentPacketRecord, type StoredJob } from "../packages/storage/src/repository";
 import { discoverFreehire, type FreehireSourceConfig } from "../packages/search/src/freehire";
@@ -44,6 +45,27 @@ export type CliFlags = {
   strict?: boolean;
   track?: string;
 };
+
+export type ConfiguredSearchSource = FreehireSourceConfig | JobsucheSourceConfig | ArbeitnowSourceConfig;
+
+export function sourceLabel(id: string): string {
+  if (id === "freehire") return "FreeHire";
+  if (id === "jobsuche") return "Jobsuche";
+  if (id === "arbeitnow") return "Arbeitnow";
+  throw new Error(`Unknown configured search source id: ${id}`);
+}
+
+export function discoverConfiguredSource(
+  source: ConfiguredSearchSource,
+  repository: StorageRepository,
+  workspace: WorkspaceSnapshot,
+  limit: number,
+): Promise<DiscoveryBatch> {
+  if (source.id === "freehire") return discoverFreehire(source, repository, workspace, { maxResults: limit });
+  if (source.id === "jobsuche") return discoverJobsuche(source, repository, workspace, { maxResults: limit });
+  if (source.id === "arbeitnow") return discoverArbeitnow(source, repository, workspace, { maxResults: limit });
+  throw new Error(`Unknown configured search source id: ${String((source as { id?: unknown }).id)}`);
+}
 
 const FLAG_DEFINITIONS: Record<FlagKey, { option: string; kind: FlagKind }> = {
   id: { option: "--id", kind: "string" },
@@ -191,7 +213,8 @@ async function runJob(root: string, command: string | undefined, arguments_: str
           .filter(Boolean);
         if (urls.length === 0) throw new Error(`URL file contains no URLs: ${flags.urlFile}`);
         const imported = [];
-        for (const url of urls) imported.push(await importVacancyFromUrl(url, repository));
+        const session = createUrlImportSession();
+        for (const url of urls) imported.push(await session.importVacancyFromUrl(url, repository));
         console.log(JSON.stringify(imported, null, 2));
         return;
       }
@@ -235,7 +258,6 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
   const limit = flags.limit ?? MODEL_REVIEW_LIMIT;
   if (!Number.isInteger(limit) || limit <= 0) throw new Error("--limit must be a positive integer");
   const workspace = await loadWorkspace(root);
-  type ConfiguredSearchSource = FreehireSourceConfig | JobsucheSourceConfig | ArbeitnowSourceConfig;
   const sources = (workspace.search as { discovery?: { sources?: ConfiguredSearchSource[] } }).discovery?.sources ?? [];
   const configuredTracks = [...new Set(sources.map((source) => source.track))];
   if (configuredTracks.length === 0) throw new Error("workspace/search.yml does not configure any discovery tracks");
@@ -256,23 +278,24 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
     console.log(`Source: ${sourceLabel} ${job.sourceId} — ${job.sourceUrl}`);
     console.log(`Import: ${job.reused ? "reused" : "created"}\n`);
   };
-  const discoverConfiguredSource = (
-    source: ConfiguredSearchSource,
-    repository: StorageRepository,
-  ): Promise<DiscoveryBatch> => {
-    if (source.id === "jobsuche") return discoverJobsuche(source, repository, workspace, { maxResults: limit });
-    if (source.id === "arbeitnow") return discoverArbeitnow(source, repository, workspace, { maxResults: limit });
-    return discoverFreehire(source, repository, workspace, { maxResults: limit });
-  };
-  const sourceLabel = (id: ConfiguredSearchSource["id"]): string =>
-    id === "jobsuche" ? "Jobsuche" : id === "arbeitnow" ? "Arbeitnow" : "FreeHire";
   if (sourceName === "all") {
     const configured = sources.filter((source) => source.enabled && tracks.includes(source.track));
-    if (configured.length === 0) throw new Error("workspace/search.yml does not configure any enabled discovery sources");
+    const registry = await loadEmployerRegistry();
+    const employers = registry.employers.filter((entry) =>
+      entry.enabled
+      && entry.policy === "public_ats_endpoint"
+      && tracks.includes(entry.track)
+      && PUBLIC_ATS_TYPES.some((ats) => ats === entry.ats));
+    if (configured.length === 0 && employers.length === 0) {
+      throw new Error("No enabled configured or public ATS discovery sources match the selected tracks");
+    }
     if (flags.dryRun) {
       console.log(`Dry run: search all | limit=${limit}`);
       for (const source of configured) {
         console.log(`- ${source.id}:${source.track} | ${source.keywords.length} keyword(s) | ${source.cities.length} city/cities`);
+      }
+      for (const employer of employers) {
+        console.log(`- ${employer.ats}:${employer.id}:${employer.track} | public ATS employer`);
       }
       console.log("No network requests or persistence were performed.");
       console.log("No application was submitted.");
@@ -285,7 +308,7 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
         printTrack(source.track);
         let batch: DiscoveryBatch;
         try {
-          batch = await discoverConfiguredSource(source, repository);
+          batch = await discoverConfiguredSource(source, repository, workspace, limit);
         } catch (error) {
           const diagnostic: SourceDiagnostic = {
             stage: "search",
@@ -309,6 +332,44 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
         const displayed = batch.jobs.filter(isActionableDiscoveryJob).slice(0, limit);
         console.log(`${label} ${source.track} status: ${batch.status} | discovered: ${batch.jobs.length} | raw results for model review: ${displayed.length}`);
         printDiscoveryDiagnostics(`${label} ${source.track}`, batch.counters, batch.diagnostics);
+        displayed.forEach((job, index) => printJob(job, index + 1, label));
+      }
+      for (const employer of employers) {
+        printTrack(employer.track);
+        const sourceId = `${employer.ats}:${employer.id}`;
+        let batch: DiscoveryBatch;
+        try {
+          batch = await discoverAtsEmployer(
+            { ...employer, cities: registry.cities },
+            repository,
+            workspace,
+            { maxResults: limit },
+          );
+        } catch (error) {
+          const diagnostic: SourceDiagnostic = {
+            stage: "search",
+            locator: employer.id,
+            code: "employer_failed",
+            message: error instanceof Error ? error.message : String(error),
+            transient: false,
+          };
+          batch = {
+            sourceId,
+            track: employer.track,
+            status: "failed",
+            scope: { planned: 1, completed: 0, failed: 1 },
+            jobs: [],
+            counters: { searched: 0, detailed: 0, imported: 0, skipped: 0, failed: 1 },
+            diagnostics: [diagnostic],
+          };
+        }
+        batches.push(batch);
+        const label = employer.ats === "smartrecruiters"
+          ? "SmartRecruiters"
+          : `${employer.ats[0].toUpperCase()}${employer.ats.slice(1)}`;
+        const displayed = batch.jobs.filter(isActionableDiscoveryJob).slice(0, limit);
+        console.log(`${label} ${employer.id} status: ${batch.status} | discovered: ${batch.jobs.length} | raw results for model review: ${displayed.length}`);
+        printDiscoveryDiagnostics(`${label} ${employer.id}`, batch.counters, batch.diagnostics);
         displayed.forEach((job, index) => printJob(job, index + 1, label));
       }
     } finally {
@@ -352,7 +413,7 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
           if (processed >= limit) break;
           try {
             const discoveryEmployer = { ...employer, cities: registry.cities };
-            const sourceBudget = Math.min(4, limit - processed);
+            const sourceBudget = limit - processed;
             const batch = await discoverAtsEmployer(discoveryEmployer, repository, workspace, { maxResults: sourceBudget });
             const atsLabel = employer.ats === "smartrecruiters"
               ? "SmartRecruiters"
@@ -392,7 +453,7 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
     candidate.id === sourceId
     && candidate.enabled
     && tracks.includes(candidate.track));
-  if (configured.length === 0) throw new Error(`workspace/search.yml does not configure an enabled ${sourceLabel(sourceId as ConfiguredSearchSource["id"])} source`);
+  if (configured.length === 0) throw new Error(`workspace/search.yml does not configure an enabled ${sourceLabel(sourceId)} source`);
   if (flags.dryRun) {
     console.log(`Dry run: search ${sourceName} | limit=${limit}`);
     for (const track of tracks) {
@@ -411,7 +472,7 @@ async function runSearch(root: string, sourceName: string | undefined, arguments
       printTrack(track);
       let index = 1;
       for (const source of configured.filter((candidate) => candidate.track === track)) {
-        const batch = await discoverConfiguredSource(source, repository);
+        const batch = await discoverConfiguredSource(source, repository, workspace, limit);
         const label = sourceLabel(source.id);
         const displayed = batch.jobs.filter(isActionableDiscoveryJob).slice(0, limit);
         console.log(`${label} ${track} discovered: ${batch.jobs.length} | raw results for model review: ${displayed.length}`);

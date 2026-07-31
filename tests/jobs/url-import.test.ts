@@ -5,6 +5,7 @@ import { openDatabase } from "../../packages/storage/src/database";
 import { migrate } from "../../packages/storage/src/migrate";
 import { StorageRepository } from "../../packages/storage/src/repository";
 import {
+  createUrlImportSession,
   extractJobPostingJsonLd,
   importVacancyFromUrl,
   robotsAllows,
@@ -222,6 +223,11 @@ test("refuses a robots-disallowed page before fetching it", async () => {
       "CareerControlRoom",
       "/private/job",
     )).toBe(false);
+    expect(robotsAllows(
+      "User-agent: Control\nDisallow: /private/job",
+      "CareerControlRoom",
+      "/private/job",
+    )).toBe(true);
     await expect(importVacancyFromUrl(
       "https://blocked.example.test/private/job",
       fixture.repository,
@@ -229,6 +235,121 @@ test("refuses a robots-disallowed page before fetching it", async () => {
     )).rejects.toThrow(/robots\.txt.*disallow|disallow.*robots\.txt/i);
     expect(requested).toEqual(["https://blocked.example.test/robots.txt"]);
     expect(fixture.db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 0 });
+  } finally {
+    fixture.db.close();
+  }
+});
+
+test("continues with a warning when robots.txt fails over the network", async () => {
+  const fixture = repository();
+  const warnings: string[] = [];
+  const fetcher = (async (input: Parameters<typeof fetch>[0]) => {
+    if (String(input).endsWith("/robots.txt")) throw new TypeError("DNS lookup failed");
+    return new Response(await html("greenhouse.html"));
+  }) as unknown as typeof fetch;
+
+  try {
+    const imported = await importVacancyFromUrl(
+      "https://network-error.example.test/jobs/1",
+      fixture.repository,
+      { fetcher, warn: (message) => warnings.push(message) },
+    );
+
+    expect(imported.title).toBe("Data Center Technician");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/robots\.txt.*DNS lookup failed/i);
+  } finally {
+    fixture.db.close();
+  }
+});
+
+test("continues with a warning when robots.txt returns 403 or 5xx", async () => {
+  for (const status of [403, 503]) {
+    const fixture = repository();
+    const warnings: string[] = [];
+    const fetcher = (async (input: Parameters<typeof fetch>[0]) => String(input).endsWith("/robots.txt")
+      ? new Response("unavailable", { status })
+      : new Response(await html("greenhouse.html"))) as unknown as typeof fetch;
+
+    try {
+      const imported = await importVacancyFromUrl(
+        `https://robots-${status}.example.test/jobs/1`,
+        fixture.repository,
+        { fetcher, warn: (message) => warnings.push(message) },
+      );
+
+      expect(imported.title).toBe("Data Center Technician");
+      expect(warnings).toEqual([
+        expect.stringMatching(new RegExp(`robots\\.txt.*HTTP ${status}`, "i")),
+      ]);
+    } finally {
+      fixture.db.close();
+    }
+  }
+});
+
+test("caches robots.txt by origin within one URL import session", async () => {
+  const fixture = repository();
+  const requests: string[] = [];
+  let now = 0;
+  const fetcher = (async (input: Parameters<typeof fetch>[0]) => {
+    const url = String(input);
+    requests.push(url);
+    return url.endsWith("/robots.txt")
+      ? new Response("User-agent: *\nDisallow:")
+      : new Response(await html("greenhouse.html"));
+  }) as unknown as typeof fetch;
+  const session = createUrlImportSession({
+    fetcher,
+    now: () => now,
+    sleep: async (delayMs) => {
+      now += delayMs;
+    },
+  });
+
+  try {
+    await session.importVacancyFromUrl("https://cached.example.test/jobs/1", fixture.repository);
+    await session.importVacancyFromUrl("https://cached.example.test/jobs/2", fixture.repository);
+
+    expect(requests.filter((url) => url.endsWith("/robots.txt"))).toEqual([
+      "https://cached.example.test/robots.txt",
+    ]);
+  } finally {
+    fixture.db.close();
+  }
+});
+
+test("paces same-host page requests by at least one second in one URL import session", async () => {
+  const fixture = repository();
+  const pageRequests: Array<{ url: string; at: number }> = [];
+  const delays: number[] = [];
+  let now = 10_000;
+  const fetcher = (async (input: Parameters<typeof fetch>[0]) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nDisallow:");
+    pageRequests.push({ url, at: now });
+    return new Response(await html("greenhouse.html"));
+  }) as unknown as typeof fetch;
+  const session = createUrlImportSession({
+    fetcher,
+    now: () => now,
+    sleep: async (delayMs) => {
+      delays.push(delayMs);
+      now += delayMs;
+    },
+  });
+
+  try {
+    await session.importVacancyFromUrl("https://paced.example.test/jobs/1", fixture.repository);
+    await session.importVacancyFromUrl("https://paced.example.test/jobs/2", fixture.repository);
+    await session.importVacancyFromUrl("https://other.example.test/jobs/3", fixture.repository);
+
+    expect(pageRequests).toEqual([
+      { url: "https://paced.example.test/jobs/1", at: 11_000 },
+      { url: "https://paced.example.test/jobs/2", at: 12_000 },
+      { url: "https://other.example.test/jobs/3", at: 13_000 },
+    ]);
+    expect(delays).toEqual([1_000, 1_000, 1_000]);
   } finally {
     fixture.db.close();
   }

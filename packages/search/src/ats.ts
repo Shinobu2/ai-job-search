@@ -320,7 +320,7 @@ async function discoverJsonAtsEmployer(
       }
     }
     completed = 1;
-    const limit = Math.max(0, Math.min(options.maxResults ?? 12, 12));
+    const limit = Math.max(0, options.maxResults ?? 12);
     const selected = prioritizeByLocation(candidates, (row) => row.location, employer.cities).slice(0, limit);
     truncated = collectionTruncated || candidates.length > selected.length;
     counters.detailed = selected.length;

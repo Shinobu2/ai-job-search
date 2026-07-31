@@ -131,7 +131,7 @@ function matchesSource(job: ArbeitnowJob, source: ArbeitnowSourceConfig): boolea
     const wanted = normalized(keyword);
     return wanted.length > 0 && haystack.includes(wanted);
   });
-  return keywordMatch && locationActionability(job.location, source.cities) === "actionable";
+  return keywordMatch && locationActionability(job.location, source.cities) !== "out_of_area";
 }
 
 function canonicalText(job: ArbeitnowJob): string {
@@ -202,6 +202,15 @@ export async function discoverArbeitnow(
             continue;
           }
           discovered.set(row.slug, row);
+          if (locationActionability(row.location, source.cities) === "unknown") {
+            diagnostics.push({
+              stage: "parse",
+              locator: `arbeitnow:${row.slug}`,
+              code: "location_unknown",
+              message: "Location is missing",
+              transient: false,
+            });
+          }
         } catch (error) {
           counters.failed += 1;
           diagnostics.push(diagnosticFromError(error, "parse", url));

@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { validateWorkspaceFile } from "../../packages/core/src/workspace";
 import { openDatabase } from "../../packages/storage/src/database";
 import { isActionableDiscoveryJob, type DiscoveredJob } from "../../packages/search/src/types";
+import { discoverConfiguredSource, sourceLabel } from "../../scripts/cli";
 
 const root = resolve(import.meta.dir, "../..");
 const cli = join(root, "scripts", "cli.ts");
@@ -78,6 +79,16 @@ test("search schema accepts an arbitrary non-empty track and still requires the 
       cities: ["Frankfurt"], keywords: ["data center technician"], max_pages: 1, page_size: 5,
     }] },
   })).toThrow();
+});
+
+test("configured source dispatch rejects unknown runtime source IDs", () => {
+  expect(() => sourceLabel("mystery")).toThrow("Unknown configured search source id: mystery");
+  expect(() => discoverConfiguredSource(
+    { id: "mystery" } as never,
+    null as never,
+    null as never,
+    1,
+  )).toThrow("Unknown configured search source id: mystery");
 });
 
 test("search flags select an arbitrary configured track and dry-run without persistence", async () => {
@@ -361,6 +372,7 @@ discovery:
   };
   const second = { ...first, public_slug: "all-two", url: "https://jobs.example/all-two" };
   let mode: "partial" | "failed" | "success" = "partial";
+  let atsFailure = false;
   const server = Bun.serve({
     port: 0,
     fetch(request) {
@@ -384,6 +396,7 @@ discovery:
         ...process.env,
         FREEHIRE_TEST_ENDPOINT: server.url.toString(),
         JOBSUCHE_TEST_ENDPOINT: server.url.toString(),
+        ATS_TEST_FAILURE: atsFailure ? "1" : "0",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -401,20 +414,28 @@ discovery:
     expect(partial.stdout).toContain("| Source | Track | Status | Searched | Detailed | Imported | Skipped | Failed |");
     expect(partial.stdout).toContain("| freehire:datacenter | datacenter | partial | 1 | 1 | 1 | 0 | 0 |");
     expect(partial.stdout).toContain("| jobsuche:datacenter | datacenter | success | 1 | 0 | 0 | 0 | 0 |");
-    expect(partial.stdout).toContain("| TOTAL | - | partial | 2 | 1 | 1 | 0 | 0 |");
+    expect(partial.stdout).toContain("| personio:maincubes | datacenter | success | 1 | 0 | 0 | 0 | 0 |");
+    expect(partial.stdout).toContain("| TOTAL | - | partial |");
 
     mode = "failed";
     const failed = await runAll();
     expect(failed.exitCode).toBe(1);
     expect(failed.stderr).toBe("");
     expect(failed.stdout).toContain("| freehire:datacenter | datacenter | failed | 1 | 0 | 0 | 0 | 1 |");
-    expect(failed.stdout).toContain("| TOTAL | - | failed | 2 | 0 | 0 | 0 | 1 |");
+    expect(failed.stdout).toContain("| TOTAL | - | failed |");
 
     mode = "success";
     const success = await runAll();
     expect(success.exitCode).toBe(0);
     expect(success.stderr).toBe("");
-    expect(success.stdout).toContain("| TOTAL | - | success | 2 | 0 | 0 | 0 | 0 |");
+    expect(success.stdout).toContain("| TOTAL | - | success |");
+
+    atsFailure = true;
+    const atsFailed = await runAll();
+    expect(atsFailed.exitCode).toBe(1);
+    expect(atsFailed.stderr).toBe("");
+    expect(atsFailed.stdout).toContain("| greenhouse:nlighten | datacenter | failed | 1 | 0 | 0 | 0 | 1 |");
+    expect(atsFailed.stdout).toContain("| TOTAL | - | failed |");
 
     const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as { scripts: Record<string, string> };
     expect(packageJson.scripts["search:all"]).toBe("bun run scripts/cli.ts search all");

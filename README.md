@@ -46,11 +46,17 @@
 
 ## Локальные команды
 
+Перед первым поиском открой личный `workspace/search.yml` и поставь
+`enabled: true` в обеих строках `jobsuche` и обеих строках `arbeitnow`
+(`datacenter` и `bridge`). Личный файл остаётся вне Git.
+
 ```powershell
 py tools/extract_cv.py
 bun run search:freehire
 bun run search:ba
+bun run search:arbeitnow
 bun run search:employers
+bun run search:all
 ```
 
 Требования для полного локального сценария: Python 3.10+, Bun и LaTeX с `lualatex`/`xelatex`. Для PDF-извлечения рекомендуется `pdftotext` (Poppler).
