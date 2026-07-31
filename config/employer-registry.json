@@ -13,6 +13,9 @@
     {"id":"nc-group","name":"NC GROUP","track":"bridge","cities":["Darmstadt"],"career_url":"https://nc-group.jobs.personio.de/?language=en","ats":"personio","policy":"public_ats_endpoint","enabled":true},
     {"id":"hellofresh","name":"HelloFresh","track":"bridge","cities":["Frankfurt am Main"],"career_url":"https://job-boards.greenhouse.io/hellofresh","ats":"greenhouse","policy":"public_ats_endpoint","enabled":true},
     {"id":"crytek","name":"Crytek","track":"bridge","cities":["Frankfurt am Main"],"career_url":"https://jobs.lever.co/crytek","ats":"lever","policy":"public_ats_endpoint","enabled":true},
+    {"id":"enpal","name":"Enpal","track":"bridge","cities":["Frankfurt am Main"],"career_url":"https://jobs.ashbyhq.com/enpal","ats":"ashby","policy":"public_ats_endpoint","enabled":true},
+    {"id":"delta-electronics","name":"Delta Electronics","track":"datacenter","cities":["Frankfurt am Main"],"career_url":"https://jobs.smartrecruiters.com/DeltaElectronics","ats":"smartrecruiters","policy":"public_ats_endpoint","enabled":true},
+    {"id":"teccle-group","name":"teccle group GmbH","track":"bridge","cities":["Frankfurt am Main"],"career_url":"https://tecclegroup.recruitee.com/","ats":"recruitee","policy":"public_ats_endpoint","enabled":true},
     {"id":"amadeus-fire","name":"Amadeus Fire","track":"datacenter","cities":["Frankfurt am Main"],"career_url":"https://www.amadeus-fire.de/jobsuche","ats":"official_search","policy":"manual_only","source_kind":"agency","enabled":true},
     {"id":"dis-ag","name":"DIS AG","track":"datacenter","cities":["Frankfurt am Main"],"career_url":"https://jobs.de.dis-ag.com/?search=IT%20Support&location=Frankfurt%20am%20Main","ats":"official_search","policy":"manual_only","source_kind":"agency","enabled":true},
     {"id":"experis","name":"Experis","track":"datacenter","cities":["Frankfurt am Main"],"career_url":"https://www.experis.de/de/search/region/frankfurt","ats":"official_search","policy":"manual_only","source_kind":"agency","enabled":true},
@@ -24,7 +27,7 @@
     {"id":"equinix","name":"Equinix","track":"datacenter","cities":["Frankfurt am Main"],"career_url":"https://careers.equinix.com/operations-deutschland","ats":"unknown","policy":"manual_only","enabled":true},
     {"id":"ntt-gdc","name":"NTT Global Data Centers","track":"datacenter","cities":["Frankfurt am Main"],"career_url":"https://careers.e-shelter.com/?locale=de_DE","ats":"workday","policy":"manual_only","enabled":true},
     {"id":"digital-realty","name":"Digital Realty","track":"datacenter","cities":["Frankfurt am Main"],"career_url":"https://hdep.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/requisitions","ats":"oracle","policy":"manual_only","enabled":true},
-    {"id":"cyrusone","name":"CyrusOne","track":"datacenter","cities":["Frankfurt am Main"],"career_url":"https://www.cyrusone.com/company/careers","ats":"unknown","policy":"manual_only","enabled":true},
-    {"id":"de-cix","name":"DE-CIX","track":"datacenter","cities":["Frankfurt am Main"],"career_url":"https://www.de-cix.net/en/about-de-cix/careers","ats":"unknown","policy":"manual_only","enabled":true}
+    {"id":"cyrusone","name":"CyrusOne","track":"datacenter","cities":["Frankfurt am Main"],"career_url":"https://cyrusone.wd1.myworkdayjobs.com/CyrusOneCareerPortal","ats":"workday","policy":"manual_only","enabled":true},
+    {"id":"de-cix","name":"DE-CIX","track":"datacenter","cities":["Frankfurt am Main"],"career_url":"https://de-cix.onlyfy.jobs/en","ats":"onlyfy","policy":"manual_only","enabled":true}
   ]
 }

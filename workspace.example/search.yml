@@ -83,6 +83,8 @@ discovery:
       include_temporary_work: true
       max_pages: 1
       page_size: 10
+    # Arbeitnow has no server-side keyword or city filters, so scan several
+    # pages and apply both filters locally.
     - id: arbeitnow
       track: datacenter
       enabled: false
@@ -94,7 +96,7 @@ discovery:
         - remote hands
         - NOC technician
         - rechenzentrumstechniker
-      max_pages: 1
+      max_pages: 5
       page_size: 20
     - id: arbeitnow
       track: bridge
@@ -107,7 +109,7 @@ discovery:
         - IT Rollout Techniker
         - Hardware Technician
         - Service Desk
-      max_pages: 1
+      max_pages: 5
       page_size: 20
     # Tracks are arbitrary profession labels. This disabled example shows how
     # to add a separate welding search without changing application code.

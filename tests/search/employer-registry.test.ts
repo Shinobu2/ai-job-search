@@ -19,11 +19,28 @@ test("Frankfurt employer registry keeps direct career sources policy-bound and c
   expect(registry.employers.find((employer) => employer.id === "nlighten")).toMatchObject({
     ats: "greenhouse", policy: "public_ats_endpoint", enabled: true, track: "datacenter",
   });
+  expect(registry.employers.find((employer) => employer.id === "enpal")).toMatchObject({
+    ats: "ashby", policy: "public_ats_endpoint", enabled: true, track: "bridge",
+  });
+  expect(registry.employers.find((employer) => employer.id === "delta-electronics")).toMatchObject({
+    ats: "smartrecruiters", policy: "public_ats_endpoint", enabled: true, track: "datacenter",
+  });
+  expect(registry.employers.find((employer) => employer.id === "teccle-group")).toMatchObject({
+    ats: "recruitee", policy: "public_ats_endpoint", enabled: true, track: "bridge",
+  });
   expect(registry.employers.find((employer) => employer.id === "amadeus-fire")).toMatchObject({
     source_kind: "agency", policy: "manual_only", enabled: true,
   });
   expect(registry.employers.find((employer) => employer.id === "randstad")).toMatchObject({
     source_kind: "agency", policy: "manual_only", enabled: true,
   });
-  expect(registry.employers.find((employer) => employer.id === "equinix")).toMatchObject({ policy: "manual_only" });
+  expect(registry.employers.find((employer) => employer.id === "equinix")).toMatchObject({
+    ats: "unknown", policy: "manual_only",
+  });
+  expect(registry.employers.find((employer) => employer.id === "cyrusone")).toMatchObject({
+    ats: "workday", policy: "manual_only",
+  });
+  expect(registry.employers.find((employer) => employer.id === "de-cix")).toMatchObject({
+    ats: "onlyfy", policy: "manual_only",
+  });
 });

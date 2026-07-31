@@ -234,3 +234,32 @@ test("paginates a SmartRecruiters collection before choosing review candidates",
     fixture.db.close();
   }
 });
+
+test("honors an ATS maxResults budget above twelve", async () => {
+  const fixture = repository();
+  const jobs = Array.from({ length: 13 }, (_, index) => ({
+    id: `ashby-${index + 1}`,
+    title: `Support Technician ${index + 1}`,
+    location: "Frankfurt, Germany",
+    descriptionPlain: "Support workplace hardware.",
+    jobUrl: `https://jobs.ashbyhq.com/fixture-ashby/ashby-${index + 1}`,
+  }));
+  try {
+    const batch = await discoverAtsEmployer(
+      employer("ashby", "https://jobs.ashbyhq.com/fixture-ashby"),
+      fixture.storage,
+      workspace as never,
+      {
+        maxResults: 13,
+        evaluate: false,
+        now: () => "2026-07-30T16:00:00.000Z",
+        fetcher: (async () => Response.json({ jobs, apiVersion: "1" })) as unknown as typeof fetch,
+      },
+    );
+
+    expect(batch.status).toBe("success");
+    expect(batch.jobs).toHaveLength(13);
+  } finally {
+    fixture.db.close();
+  }
+});

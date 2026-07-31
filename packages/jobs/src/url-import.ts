@@ -4,6 +4,7 @@ import { importVacancy, visibleHtmlText } from "./import";
 import type { ImportedJob } from "./types";
 
 export const URL_IMPORT_TIMEOUT_MS = 15_000;
+export const URL_IMPORT_HOST_DELAY_MS = 1_000;
 export const URL_IMPORT_USER_AGENT = [
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
   "AppleWebKit/537.36 (KHTML, like Gecko)",
@@ -40,9 +41,29 @@ export type MappedJobPosting = {
 
 export type UrlImportSource = "json-ld" | "model-fallback";
 export type UrlImportedJob = ImportedJob & { importSource: UrlImportSource };
+export type UrlImportOptions = {
+  fetcher?: typeof fetch;
+  warn?: (message: string) => void;
+};
+export type UrlImportSessionOptions = UrlImportOptions & {
+  now?: () => number;
+  sleep?: (delayMs: number) => Promise<void>;
+};
+export type UrlImportSession = {
+  importVacancyFromUrl: (
+    url: string,
+    repository: StorageRepository,
+  ) => Promise<UrlImportedJob>;
+};
 
 type RobotsRule = { allow: boolean; pattern: string };
 type RobotsGroup = { agents: string[]; rules: RobotsRule[] };
+type UrlImportSessionState = {
+  robotsByOrigin: Map<string, Promise<string | null>>;
+  lastRequestAtByHost: Map<string, number>;
+  now: () => number;
+  sleep: (delayMs: number) => Promise<void>;
+};
 
 function object(value: unknown): JsonObject | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -209,7 +230,7 @@ function groupAgentScore(group: RobotsGroup, userAgent: string): number {
   let score = -1;
   for (const agent of group.agents) {
     if (agent === "*") score = Math.max(score, 0);
-    else if (normalized.includes(agent)) score = Math.max(score, agent.length);
+    else if (normalized === agent) score = Math.max(score, agent.length);
   }
   return score;
 }
@@ -271,6 +292,65 @@ async function get(
   }
 }
 
+async function fetchRobotsText(
+  robotsUrl: string,
+  fetcher: typeof fetch,
+  warn: (message: string) => void,
+  session: UrlImportSessionState | undefined,
+): Promise<string | null> {
+  let response: Response;
+  try {
+    await paceRequest(new URL(robotsUrl).host, session);
+    response = await get(robotsUrl, "robots.txt request", fetcher);
+  } catch (error) {
+    warn(`Unable to read ${robotsUrl}; continuing: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+
+  if (!response.ok) {
+    if (response.status !== 404 && response.status !== 410) {
+      warn(`Unable to read ${robotsUrl}; continuing after HTTP ${response.status}`);
+    }
+    return null;
+  }
+
+  try {
+    return await response.text();
+  } catch (error) {
+    warn(`Unable to read ${robotsUrl}; continuing: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
+function robotsTextForOrigin(
+  origin: string,
+  fetcher: typeof fetch,
+  warn: (message: string) => void,
+  session: UrlImportSessionState | undefined,
+): Promise<string | null> {
+  const robotsUrl = new URL("/robots.txt", origin).toString();
+  if (!session) return fetchRobotsText(robotsUrl, fetcher, warn, undefined);
+
+  const cached = session.robotsByOrigin.get(origin);
+  if (cached) return cached;
+  const pending = fetchRobotsText(robotsUrl, fetcher, warn, session);
+  session.robotsByOrigin.set(origin, pending);
+  return pending;
+}
+
+async function paceRequest(
+  host: string,
+  session: UrlImportSessionState | undefined,
+): Promise<void> {
+  if (!session) return;
+  const previous = session.lastRequestAtByHost.get(host);
+  if (previous !== undefined) {
+    const remaining = URL_IMPORT_HOST_DELAY_MS - (session.now() - previous);
+    if (remaining > 0) await session.sleep(remaining);
+  }
+  session.lastRequestAtByHost.set(host, session.now());
+}
+
 function renderedPosting(posting: MappedJobPosting): string {
   const lines: string[] = [];
   const location = posting.location
@@ -309,10 +389,11 @@ function postingLocation(posting: MappedJobPosting): string | null {
   ].filter((value): value is string => value !== null).join(", ") || null;
 }
 
-export async function importVacancyFromUrl(
+async function importVacancyFromUrlWithSession(
   url: string,
   repository: StorageRepository,
-  options: { fetcher?: typeof fetch } = {},
+  options: UrlImportOptions,
+  session: UrlImportSessionState | undefined,
 ): Promise<UrlImportedJob> {
   const canonicalUrl = canonicalHttpUrl(url);
   if (!canonicalUrl) throw new Error(`Invalid job URL: ${url}`);
@@ -326,20 +407,17 @@ export async function importVacancyFromUrl(
   if (target.username || target.password) throw new Error("Job URL must not contain credentials");
 
   const fetcher = options.fetcher ?? fetch;
-  const robotsUrl = new URL("/robots.txt", target.origin).toString();
-  const robotsResponse = await get(robotsUrl, "robots.txt request", fetcher);
-  if (robotsResponse.ok) {
-    const robotsText = await robotsResponse.text();
-    if (!robotsAllows(robotsText, ROBOT_NAME, `${target.pathname}${target.search}`)) {
-      throw new Error(`robots.txt disallows fetching ${target.pathname}`);
-    }
-  } else if (robotsResponse.status !== 404 && robotsResponse.status !== 410) {
-    throw new Error(`Unable to verify robots.txt: HTTP ${robotsResponse.status}`);
+  const warn = options.warn ?? ((message: string) => console.warn(message));
+  const robotsText = await robotsTextForOrigin(target.origin, fetcher, warn, session);
+  if (robotsText !== null && !robotsAllows(robotsText, ROBOT_NAME, `${target.pathname}${target.search}`)) {
+    throw new Error(`robots.txt disallows fetching ${target.pathname}`);
   }
 
+  await paceRequest(target.host, session);
   let pageResponse = await get(url, "Job page request", fetcher);
   if ((pageResponse.status === 404 || pageResponse.status === 410) && canonicalUrl !== url) {
     await pageResponse.body?.cancel();
+    await paceRequest(new URL(canonicalUrl).host, session);
     pageResponse = await get(canonicalUrl, "Job page request", fetcher);
   }
   if (!pageResponse.ok) throw new Error(`Job page request failed: HTTP ${pageResponse.status}`);
@@ -367,4 +445,31 @@ export async function importVacancyFromUrl(
     sourceType: "model-fallback",
   }, repository);
   return { ...imported, importSource: "model-fallback" };
+}
+
+export async function importVacancyFromUrl(
+  url: string,
+  repository: StorageRepository,
+  options: UrlImportOptions = {},
+): Promise<UrlImportedJob> {
+  return importVacancyFromUrlWithSession(url, repository, options, undefined);
+}
+
+export function createUrlImportSession(
+  options: UrlImportSessionOptions = {},
+): UrlImportSession {
+  const state: UrlImportSessionState = {
+    robotsByOrigin: new Map(),
+    lastRequestAtByHost: new Map(),
+    now: options.now ?? (() => Date.now()),
+    sleep: options.sleep ?? ((delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs))),
+  };
+  return {
+    importVacancyFromUrl: (url, repository) => importVacancyFromUrlWithSession(
+      url,
+      repository,
+      options,
+      state,
+    ),
+  };
 }

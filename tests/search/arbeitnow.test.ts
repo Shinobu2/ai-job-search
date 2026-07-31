@@ -20,7 +20,7 @@ const source: ArbeitnowSourceConfig = {
   page_size: 20,
 };
 
-function job(slug: string, title: string, location: string) {
+function job(slug: string, title: string, location: string | null) {
   return {
     slug,
     company_name: "Fixture GmbH",
@@ -89,6 +89,42 @@ test("paginates Arbeitnow, filters locally by keyword and city, and deduplicates
     expect(stored.every((row) => row.source_type === "arbeitnow_public_api")).toBe(true);
     expect(stored[0].raw_content).toContain("Replace server hardware.");
     expect(stored[0].raw_content).not.toContain("<strong>");
+  } finally {
+    db.close();
+  }
+});
+
+test("keeps keyword matches with an unknown location and diagnoses them", async () => {
+  const db = openDatabase(":memory:");
+  migrate(db);
+  try {
+    const batch = await discoverArbeitnow(
+      { ...source, max_pages: 1 },
+      new StorageRepository(db),
+      workspace as never,
+      {
+        evaluate: false,
+        now: () => "2026-07-30T15:30:00.000Z",
+        fetcher: (async () => Response.json({
+          data: [
+            job("unknown-city", "NOC Technician", null),
+            job("outside-city", "NOC Technician", "Berlin"),
+          ],
+          links: { next: null },
+          meta: { current_page: 1, per_page: 175 },
+        })) as unknown as typeof fetch,
+      },
+    );
+
+    expect(batch.jobs).toEqual([
+      expect.objectContaining({ title: "NOC Technician", location: null, actionable: true }),
+    ]);
+    expect(batch.diagnostics).toContainEqual(expect.objectContaining({
+      stage: "parse",
+      locator: "arbeitnow:unknown-city",
+      code: "location_unknown",
+    }));
+    expect(batch.counters).toMatchObject({ imported: 1, skipped: 1, failed: 0 });
   } finally {
     db.close();
   }
