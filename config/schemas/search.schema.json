@@ -16,7 +16,7 @@
             "type": "object",
             "required": ["id", "track", "enabled", "mode", "country", "cities", "keywords", "max_pages", "page_size"],
             "properties": {
-              "id": { "enum": ["freehire", "jobsuche"] },
+              "id": { "enum": ["freehire", "jobsuche", "arbeitnow"] },
               "track": { "type": "string", "minLength": 1 },
               "enabled": { "type": "boolean" },
               "mode": { "const": "read_import_evaluate" },

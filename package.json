@@ -15,6 +15,7 @@
     "report:daily": "bun run scripts/cli.ts report daily",
     "search:freehire": "bun run scripts/cli.ts search freehire",
     "search:ba": "bun run scripts/cli.ts search ba",
+    "search:arbeitnow": "bun run scripts/cli.ts search arbeitnow",
     "search:employers": "bun run scripts/cli.ts search employers",
     "search:all": "bun run scripts/cli.ts search all",
     "capabilities": "bun run scripts/cli.ts capabilities",

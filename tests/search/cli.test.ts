@@ -52,6 +52,16 @@ test("search schema accepts a read-only Jobsuche source without breaking FreeHir
   })).not.toThrow();
 });
 
+test("search schema accepts a configured Arbeitnow source", () => {
+  expect(() => validateWorkspaceFile("search", {
+    schema_version: 1,
+    discovery: { sources: [{
+      id: "arbeitnow", track: "support", enabled: true, mode: "read_import_evaluate", country: "DE",
+      cities: ["Frankfurt"], keywords: ["IT Support"], max_pages: 1, page_size: 20,
+    }] },
+  })).not.toThrow();
+});
+
 test("search schema accepts an arbitrary non-empty track and still requires the field", () => {
   expect(() => validateWorkspaceFile("search", {
     schema_version: 1,
