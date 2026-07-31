@@ -20,6 +20,18 @@ test("chatbot playbook is self-contained for public search, JSON-LD import, and 
   }
 
   expect(playbook).toContain("X-API-Key: jobboerse-jobsuche");
+  const level1 = playbook.indexOf("### Уровень 1 — JSON/XML-эндпоинт");
+  const level2 = playbook.indexOf("### Уровень 2 — видимые HTML-страницы");
+  const level3 = playbook.indexOf("### Уровень 3 — пользователь вставляет текст");
+  expect(level1).toBeGreaterThan(-1);
+  expect(level2).toBeGreaterThan(level1);
+  expect(level3).toBeGreaterThan(level2);
+  expect(playbook).toContain("https://www.stepstone.de/jobs/{keyword}/in-{city}");
+  expect(playbook).toContain('source: "manual-text"');
+  expect(playbook).toContain("вставить полный видимый текст без пересказа");
+  expect(playbook).toContain("directApply");
+  expect(playbook).toContain("Отсутствующее поле оставь `null`");
+  expect(playbook).toContain("не запускай массовый crawler");
   expect(playbook).toContain('<script type="application/ld+json">');
   expect(playbook).toContain('"title": null');
   expect(playbook).toContain('"directApply": null');
