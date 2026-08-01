@@ -41,7 +41,7 @@ discovery:
       page_size: 10
     - id: jobsuche
       track: datacenter
-      enabled: false
+      enabled: true
       mode: read_import_evaluate
       country: DE
       cities: [Frankfurt]
@@ -62,7 +62,7 @@ discovery:
       page_size: 10
     - id: jobsuche
       track: bridge
-      enabled: false
+      enabled: true
       mode: read_import_evaluate
       country: DE
       cities: [Frankfurt]
@@ -87,7 +87,7 @@ discovery:
     # pages and apply both filters locally.
     - id: arbeitnow
       track: datacenter
-      enabled: false
+      enabled: true
       mode: read_import_evaluate
       country: DE
       cities: [Frankfurt, Eschborn, Offenbach, Darmstadt, Wiesbaden, Mainz]
@@ -100,7 +100,7 @@ discovery:
       page_size: 20
     - id: arbeitnow
       track: bridge
-      enabled: false
+      enabled: true
       mode: read_import_evaluate
       country: DE
       cities: [Frankfurt, Eschborn, Offenbach, Darmstadt, Wiesbaden, Mainz]
