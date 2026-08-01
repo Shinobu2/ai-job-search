@@ -163,3 +163,25 @@ X-API-Key: jobboerse-jobsuche
 ```
 
 После добавления сообщи пользователю, сколько уникальных вакансий найдено, какие требуют уточнения и что никакая заявка не была отправлена.
+
+## Empirically verified fetch behaviour (2026-07-31)
+
+Работает:
+
+- страницы списков StepStone только в точной форме `https://www.stepstone.de/jobs/<keyword>/in-<city>` без query-параметров; проверены keywords `rechenzentrum`, `quereinsteiger`, `english`, `1st-level-support`, `videoueberwachung`, `disponent`, `luftfracht`;
+- обычные карьерные страницы работодателей;
+- страницы вакансий `amazon.jobs`;
+- `jobs-fraport.com`;
+- страницы списков `en.devjobs.de`;
+- страницы списков `englishjobs.de`;
+- доски `jobs.lever.co`.
+
+Не работает через chatbot fetch tool:
+
+- Indeed, XING и LinkedIn;
+- JavaScript-rendered доски Greenhouse;
+- любые ответы raw JSON или XML API;
+- URL StepStone с `?radius=`;
+- detail pages StepStone, оканчивающиеся на `-inline.html`.
+
+Постоянное правило: если источник нельзя загрузить, переходи к level-3 pasted-text flow, а не угадывай содержимое вакансии. Никогда не обходи CAPTCHA, login, `robots.txt` или paywall.
