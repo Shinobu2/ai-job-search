@@ -222,7 +222,9 @@ test("search freehire caps model-review output and diagnostic noise", async () =
     const stdout = await new Response(child.stdout).text();
     expect(stdout).toContain("FreeHire datacenter discovered: 12 | raw results for model review: 12");
     expect(stdout).toContain("FreeHire bridge discovered: 12 | raw results for model review: 12");
-    expect(stdout.match(/Source: FreeHire/g)).toHaveLength(24);
+    expect(stdout).toContain("FreeHire airport_logistics discovered: 12 | raw results for model review: 12");
+    expect(stdout).toContain("FreeHire monitoring_security discovered: 12 | raw results for model review: 12");
+    expect(stdout.match(/Source: FreeHire/g)).toHaveLength(48);
     expect(stdout).not.toContain("fixture-failed");
   } finally {
     server.stop(true);
